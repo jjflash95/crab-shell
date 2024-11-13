@@ -1,4 +1,4 @@
  - add * expansions (i.e. head *.rs => head main.rs lib.rs)
  - statements if/fi, case/esac, for, etc
  - improve source command
-
+ - echo $USER:$USER

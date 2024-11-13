@@ -24,6 +24,18 @@ pub struct Cmd<'a> {
     pub args: Vec<&'a str>,
 }
 
+
+#[derive(Debug, PartialEq)]
+pub enum Node<'a> {
+    Statement(Stmt<'a>),
+    Expression(Expr<'a>),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Stmt {
+    If {},
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Expr<'a> {
     And {
@@ -208,6 +220,17 @@ pub fn cmd(mut source: TokenStream) -> ParseRes {
     }
     let expr = Expr::Cmd(Cmd { program, args });
     Ok((source, expr))
+}
+
+pub fn generate_program<'a>(mut tokens: Peekable<Iter<'a, Token<'a>>>) -> Vec<Expr<'a>> {
+    let mut program = vec![];
+
+    while let Ok((rest, expr)) = ast(tokens) {
+        program.push(expr);
+        tokens = rest;
+    }
+
+    program
 }
 
 #[cfg(test)]
@@ -422,5 +445,10 @@ mod tests {
 
         assert!(rest.collect::<Vec<_>>().is_empty());
         assert_eq!(ast, expected);
+    }
+
+    #[test]
+    fn test_complex_parse() {
+        
     }
 }
