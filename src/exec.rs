@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs::{File, OpenOptions},
     io::{self, stderr, Error, ErrorKind, Read as _, Stderr, Stdout, Write},
     os::fd::{AsRawFd, FromRawFd as _},
@@ -17,7 +18,7 @@ use crate::{
     app::{AppState, Sourcer},
     expand::{lexer::Token as ArgToken, tokenize},
     lexer::Tokenizer,
-    parser::{ast, Cmd, Expr, FileMode},
+    parser::{ast, Cmd, Expr, FileMode, Node, Stmt},
     utils, APP_NAME_SHORT,
 };
 
@@ -112,6 +113,141 @@ impl WaitableProcess for Pid {
     }
 }
 
+pub fn exec_program<I, E, O>(
+    nodes: &[Node],
+    channels: StdChannels<I, E, O>,
+    ctx: &mut AppState,
+) -> Result<Pid, Error>
+where
+    I: Into<Stdio>,
+    O: Into<Stdio> + AsRawFd + Write,
+    E: Into<Stdio> + AsRawFd + Write,
+{
+    for node in nodes {
+        exec_node(node, channels.dup()?, ctx)?.wait_for(|s| s == 0)?;
+    }
+
+    exec_cmd(&NOOP_PROGRAM, channels, ctx)
+}
+
+pub fn exec_node<I, E, O>(
+    node: &Node,
+    channels: StdChannels<I, E, O>,
+    ctx: &mut AppState,
+) -> Result<Pid, Error>
+where
+    I: Into<Stdio>,
+    O: Into<Stdio> + AsRawFd + Write,
+    E: Into<Stdio> + AsRawFd + Write,
+{
+    match node {
+        Node::Statement(stmt) => exec_stmt(stmt, channels, ctx),
+        Node::Expression(expr) => exec_ast(expr, channels, ctx),
+    }
+}
+
+pub fn exec_stmt<I, E, O>(
+    stmt: &Stmt,
+    channels: StdChannels<I, E, O>,
+    ctx: &mut AppState,
+) -> Result<Pid, Error>
+where
+    I: Into<Stdio>,
+    O: Into<Stdio> + AsRawFd + Write,
+    E: Into<Stdio> + AsRawFd + Write,
+{
+    use Stmt::*;
+
+    match stmt {
+        If {
+            condition,
+            then,
+            or_then,
+        } => exec_if(condition, then, or_then.as_deref(), channels, ctx),
+        For { var, items, body } => exec_for(var, items, body, channels, ctx),
+        While { condition, body } => exec_while(condition, body, channels, ctx),
+        Block(nodes) => exec_block(nodes, channels, ctx),
+    }
+}
+
+pub fn exec_if<I, E, O>(
+    condition: &Expr,
+    then: &Node,
+    or_else: Option<&Node>,
+    channels: StdChannels<I, E, O>,
+    ctx: &mut AppState,
+) -> Result<Pid, Error>
+where
+    I: Into<Stdio>,
+    O: Into<Stdio> + AsRawFd + Write,
+    E: Into<Stdio> + AsRawFd + Write,
+{
+    if exec_ast(condition, channels.dup()?, ctx)?
+        .wait_for(|c| c == 0)
+        .is_ok()
+    {
+        exec_node(then, channels, ctx)
+    } else if let Some(or_then) = or_else {
+        exec_node(or_then, channels, ctx)
+    } else {
+        exec_cmd(&NOOP_PROGRAM, channels, ctx)
+    }
+}
+
+pub fn exec_for<I, E, O>(
+    var: &str,
+    items: &[&str],
+    body: &[Node],
+    channels: StdChannels<I, E, O>,
+    ctx: &mut AppState,
+) -> Result<Pid, Error>
+where
+    I: Into<Stdio>,
+    O: Into<Stdio> + AsRawFd + Write,
+    E: Into<Stdio> + AsRawFd + Write,
+{
+    for item in items {
+        let item = evaluate_arg(item, ctx);
+        ctx.locals.insert(var.to_string(), item);
+        exec_block(body, channels.dup()?, ctx)?;
+    }
+
+    exec_cmd(&NOOP_PROGRAM, channels, ctx)
+}
+
+pub fn exec_while<I, E, O>(
+    condition: &Expr,
+    body: &[Node],
+    channels: StdChannels<I, E, O>,
+    ctx: &mut AppState,
+) -> Result<Pid, Error>
+where
+    I: Into<Stdio>,
+    O: Into<Stdio> + AsRawFd + Write,
+    E: Into<Stdio> + AsRawFd + Write,
+{
+    while exec_ast(condition, channels.dup()?, ctx)
+        .and_then(|child| child.wait_for(|c| c == 0))
+        .is_ok()
+    {
+        exec_block(body, channels.dup()?, ctx)?;
+    }
+    exec_cmd(&NOOP_PROGRAM, channels, ctx)
+}
+
+pub fn exec_block<I, E, O>(
+    nodes: &[Node],
+    channels: StdChannels<I, E, O>,
+    ctx: &mut AppState,
+) -> Result<Pid, Error>
+where
+    I: Into<Stdio>,
+    O: Into<Stdio> + AsRawFd + Write,
+    E: Into<Stdio> + AsRawFd + Write,
+{
+    exec_program(nodes, channels, ctx)
+}
+
 pub fn exec_ast<I, E, O>(
     ast: &Expr,
     channels: StdChannels<I, E, O>,
@@ -132,6 +268,7 @@ where
         Or { l, r } => exec_or(l, r, channels, ctx),
         RedirOutput { op, mode, dest } => exec_redir_out(op, dest, mode, channels, ctx),
         RedirInput { op, src } => exec_redir_inp(op, src, channels, ctx),
+        Break => todo!(),
     }
 }
 
@@ -403,11 +540,7 @@ where
     Ok(())
 }
 
-fn source(
-    args: &[&str],
-    ctx: &mut AppState,
-) -> Result<(), Error>
-{
+fn source(args: &[&str], ctx: &mut AppState) -> Result<(), Error> {
     for arg in args {
         Sourcer::source_from_file(evaluate_arg(arg, ctx), ctx);
     }
@@ -442,7 +575,7 @@ where
             ));
         };
 
-
+        let name = evaluate_arg(name, ctx);
         let value = evaluate_arg(value, ctx);
         if !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
             return Err(Error::new(
@@ -451,9 +584,9 @@ where
             ));
         }
         if export {
-            std::env::set_var(name, value.as_str());
+            std::env::set_var(name.as_str(), value.as_str());
         }
-        ctx.locals.insert(name.to_string(), value.to_string());
+        ctx.locals.insert(name, value.to_string());
     }
     Ok(())
 }

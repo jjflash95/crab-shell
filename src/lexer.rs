@@ -10,10 +10,40 @@ pub enum Token<'a> {
     RParen,
     LBrace,
     RBrace,
+    LBracket,
+    RBracket,
     Redirect(RedirOp),
     Background,
     Semicolon,
     QuotedStr(&'a str),
+    If,
+    Endif,
+    Else,
+    Then,
+    Do,
+    Done,
+    While,
+    For,
+    In,
+    Newline,
+}
+
+impl<'a> From<&'a str> for Token<'a> {
+    fn from(value: &'a str) -> Self {
+        use Token::*;
+        match value {
+            "if" => If,
+            "else" => Else,
+            "then" => Then,
+            "do" => Do,
+            "done" => Done,
+            "while" => While,
+            "for" => For,
+            "in" => In,
+            "fi" => Endif,
+            s => Word(s),
+        }
+    }
 }
 
 impl<'a> Token<'a> {
@@ -70,8 +100,8 @@ impl<'a> Tokenizer<'a> {
         assert!(matches!(iterable.next(), Some((_, '$'))), "sorry I fkd up");
 
         for (i, c) in iterable {
-            if c.is_whitespace() || c == '$' || c == '/' {
-                return self.lexer.take_subslice(i + c.len_utf8());
+            if c.is_whitespace() || c == '$' || c == '/' || c == '\n' {
+                return self.lexer.take_subslice(i);
             }
         }
         self.lexer.take_subslice(self.lexer.slice.len())
@@ -147,6 +177,14 @@ impl<'a> Tokenizer<'a> {
                     Some(Redirect(RedirOp::Output))
                 }
             }
+            Some((i, '\n')) => {
+                let _ = self.lexer.take_subslice(1 + i);
+                Some(Newline)
+            }
+            Some((_, '#')) => {
+                self.lexer.take_while(|c| c != '\n');
+                self.next_token()
+            }
             Some((i, '<')) => {
                 let _ = self.lexer.take_subslice(1 + i);
                 Some(Redirect(RedirOp::Input))
@@ -167,6 +205,14 @@ impl<'a> Tokenizer<'a> {
                 let _ = self.lexer.take_subslice(1 + i);
                 Some(RParen)
             }
+            Some((i, '[')) => {
+                let _ = self.lexer.take_subslice(1 + i);
+                Some(LBracket)
+            }
+            Some((i, ']')) => {
+                let _ = self.lexer.take_subslice(1 + i);
+                Some(RBracket)
+            }
             Some((i, ';')) => {
                 let _ = self.lexer.take_subslice(1 + i);
                 Some(Semicolon)
@@ -176,7 +222,7 @@ impl<'a> Tokenizer<'a> {
                 let _ = self.lexer.take_while(|c| c.is_whitespace());
                 self.next()
             }
-            Some(_) => Some(Word(self.lexer.take_word())),
+            Some(_) => Some(Token::from(self.lexer.take_word())),
             None => None,
         }
     }
@@ -233,7 +279,7 @@ impl<'a> Lexer<'a> {
             !c.is_whitespace()
                 && !matches!(
                     c,
-                    '|' | '&' | '<' | '>' | '(' | ')' | '{' | '}' | ';' 
+                    '\n' | '|' | '&' | '<' | '>' | '(' | ')' | '{' | '}' | ';' | '[' | ']'
                 )
         })
     }
@@ -327,13 +373,13 @@ mod tests {
     fn test_complex_command() {
         let cmd = r#"if [ -f "file.txt" ]; then echo "found" && cat file.txt | grep pattern; fi"#;
         let expected = vec![
-            Token::Word("if"),
-            Token::Word("["),
+            Token::If,
+            Token::LBracket,
             Token::Word("-f"),
             Token::QuotedStr("file.txt"),
-            Token::Word("]"),
+            Token::RBracket,
             Token::Semicolon,
-            Token::Word("then"),
+            Token::Then,
             Token::Word("echo"),
             Token::QuotedStr("found"),
             Token::And,
@@ -343,7 +389,7 @@ mod tests {
             Token::Word("grep"),
             Token::Word("pattern"),
             Token::Semicolon,
-            Token::Word("fi"),
+            Token::Endif,
         ];
         assert_eq!(tokenize(cmd), Ok(expected));
     }
@@ -380,6 +426,64 @@ mod tests {
             Token::Background,
             Token::Word("echo"),
             Token::QuotedStr("done"),
+        ];
+        assert_eq!(tokenize(cmd), Ok(expected));
+    }
+
+    #[test]
+    fn test_var_newline() {
+        use Token::*;
+
+        let cmd = "
+            echo start
+            if [true]; then {
+                ls -l | grep .txt > files.txt
+                for f in *.txt; do
+                    cat $f
+                done
+            } fi
+            echo end
+        ";
+
+        let expected = vec![
+            Newline,
+            Word("echo"),
+            Word("start"),
+            Newline,
+            If,
+            LBracket,
+            Word("true"),
+            RBracket,
+            Semicolon,
+            Then,
+            LBrace,
+            Newline,
+            Word("ls"),
+            Word("-l"),
+            Pipe,
+            Word("grep"),
+            Word(".txt"),
+            Redirect(RedirOp::Output),
+            Word("files.txt"),
+            Newline,
+            For,
+            Word("f"),
+            In,
+            Word("*.txt"),
+            Semicolon,
+            Do,
+            Newline,
+            Word("cat"),
+            Word("$f"),
+            Newline,
+            Done,
+            Newline,
+            RBrace,
+            Endif,
+            Newline,
+            Word("echo"),
+            Word("end"),
+            Newline,
         ];
         assert_eq!(tokenize(cmd), Ok(expected));
     }

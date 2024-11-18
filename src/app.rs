@@ -1,14 +1,19 @@
 use std::{
     collections::HashMap,
     fmt::Display,
-    fs,
-    io::{stdout, BufRead as _, BufReader, Error, Write as _},
+    fs::{self, File},
+    io::{stdout, BufRead as _, BufReader, Error, Read, Write as _},
     path::{Path, PathBuf},
 };
 
 use termion::{cursor, raw::IntoRawMode as _};
 
-use crate::{exec_tree, git, lexer::Tokenizer, parser, RawTerm, APP_NAME_SHORT};
+use crate::{
+    exec::{exec_node, StdChannels, WaitableProcess as _},
+    exec_tree, git,
+    lexer::Tokenizer,
+    parser, RawTerm, APP_NAME_SHORT,
+};
 
 const HISTORY_FILE_NAME: &str = ".history";
 
@@ -37,6 +42,14 @@ pub struct History {
 
 pub struct Sourcer;
 
+#[derive(Debug)]
+pub enum SourceError {
+    FileError(String),
+    Lex(String),
+    Parse(String),
+    Exec(String),
+}
+
 impl AppState {
     pub fn new() -> Result<Self, Error> {
         let mut this = Self {
@@ -46,8 +59,7 @@ impl AppState {
             branch: git::get_current_branch(),
             locals: HashMap::new(),
         };
-
-        Sourcer::source(&mut this);
+        Sourcer::source_default_path(&mut this);
         Ok(this)
     }
 
@@ -71,28 +83,39 @@ impl Display for AppState {
 }
 
 impl Sourcer {
-    pub fn source(app: &mut AppState) {
-        Sourcer::source_from_file(Self::get_default_path(), app);
+    pub fn source_default_path(app: &mut AppState) {
+        if let Err(e) = Sourcer::source_from_file(Self::get_default_path(), app) {
+            eprintln!("source err: {:?}", e);
+        }
     }
 
-    pub fn source_from_file<S: AsRef<Path>>(file: S, app: &mut AppState) {
-        if let Ok(history) = History::from_path(file.as_ref()) {
-            for (line, cmd) in history.buffer.iter().enumerate() {
-                if cmd.trim().is_empty() {
-                    continue;
-                }
-
-                let tokens = Tokenizer::new(cmd).collect::<Vec<_>>();
-                let Ok((_, ast)) = parser::ast(tokens.iter().peekable()) else {
-                    eprint!("source: line {}: failed processing {cmd}\r\n", line + 1);
-                    continue;
-                };
-                match exec_tree(&ast, app) {
-                    Ok(_) => {}
-                    Err(e) => eprint!("source: line {}:, failed exec {e}\r\n", line + 1),
-                }
+    pub fn source_from_text(s: &str, app: &mut AppState) -> Result<(), SourceError> {
+        let tokens: Vec<_> = Tokenizer::new(s).collect();
+        let program = parser::generate_program(tokens.iter().peekable());
+        for node in program {
+            if let Err(e) =
+                exec_node(&node, StdChannels::default(), app).and_then(|pid| pid.wait_for(|_| true))
+            {
+                eprintln!("source: failed exec: {e}\r\n{}\r\n", node);
             }
         }
+        Ok(())
+    }
+
+    pub fn source_from_file<S: AsRef<Path>>(
+        file: S,
+        app: &mut AppState,
+    ) -> Result<(), SourceError> {
+        let Ok(mut f) = File::open(file.as_ref()) else {
+            return Err(SourceError::FileError(format!(
+                "Failed to open {}",
+                file.as_ref().to_str().unwrap_or("")
+            )));
+        };
+        let mut contents = vec![];
+        let _ = f.read_to_end(&mut contents);
+        let s = String::from_utf8_lossy(&contents);
+        Sourcer::source_from_text(&s, app)
     }
 
     fn get_default_path() -> PathBuf {
@@ -247,5 +270,41 @@ impl Drop for History {
         for cmd in self.buffer[self.save_from..].iter() {
             let _ = file.write_all(format!("{}\n", cmd).as_bytes());
         }
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rc() {
+        let src = "
+                if [ true ]; then 
+                    export var1=1
+                else
+                    export var1=2
+                        fi;
+
+
+                if false; then
+                    export var2=123
+                else
+                    export var2=345
+
+                fi;
+
+                for i in 3 4 5; do
+                    export var$i=$i
+                done
+            ";
+
+        let mut app = AppState::new().unwrap();
+        Sourcer::source_from_text(src, &mut app).unwrap();
+        assert_eq!(app.get_var("var1"), "1".to_string());
+        assert_eq!(app.get_var("var2"), "345".to_string());
+        assert_eq!(app.get_var("var3"), "3".to_string());
+        assert_eq!(app.get_var("var4"), "4".to_string());
+        assert_eq!(app.get_var("var5"), "5".to_string());
     }
 }
