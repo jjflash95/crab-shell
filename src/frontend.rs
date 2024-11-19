@@ -110,11 +110,11 @@ impl RgbFromEnv for PromptBar {
 
 impl RgbFromEnv for FuzzyFindEntry {
     fn key_bg() -> &'static str {
-        "FUZZY_FIND_ENTRY_FG"
+        "FUZZY_FIND_ENTRY_BG"
     }
 
     fn key_fg() -> &'static str {
-        "FUZZY_FIND_ENTRY_BG"
+        "FUZZY_FIND_ENTRY_FG"
     }
 
     fn default_bg() -> Rgb {
@@ -146,7 +146,7 @@ impl RgbFromEnv for FileSearchResult {
 
 impl RgbFromEnv for DirSearchResult {
     fn key_fg() -> &'static str {
-        "DIR_SEARCH_RESULT_BG"
+        "DIR_SEARCH_RESULT_FG"
     }
 
     fn key_bg() -> &'static str {
@@ -186,7 +186,7 @@ impl RgbFromEnv for SocketSearchResult {
     }
 
     fn key_bg() -> &'static str {
-        "SOCKEt_SEARCH_RESULT_BG"
+        "SOCKET_SEARCH_RESULT_BG"
     }
 
     fn default_fg() -> Rgb {

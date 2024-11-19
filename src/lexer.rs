@@ -100,7 +100,7 @@ impl<'a> Tokenizer<'a> {
         assert!(matches!(iterable.next(), Some((_, '$'))), "sorry I fkd up");
 
         for (i, c) in iterable {
-            if c.is_whitespace() || c == '$' || c == '/' || c == '\n' {
+            if c.is_whitespace() || c == '\n' {
                 return self.lexer.take_subslice(i);
             }
         }
@@ -176,6 +176,10 @@ impl<'a> Tokenizer<'a> {
                     let _ = self.lexer.take_subslice(1 + i);
                     Some(Redirect(RedirOp::Output))
                 }
+            }
+            Some((i, '\\')) => {
+                let _ = self.lexer.take_subslice(1 + i);
+                self.next_token()
             }
             Some((i, '\n')) => {
                 let _ = self.lexer.take_subslice(1 + i);

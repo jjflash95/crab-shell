@@ -9,8 +9,7 @@ use std::{
 use termion::{cursor, raw::IntoRawMode as _};
 
 use crate::{
-    exec::{exec_node, StdChannels, WaitableProcess as _},
-    exec_tree, git,
+    exec::{exec_node, StdChannels, WaitableProcess as _}, git,
     lexer::Tokenizer,
     parser, RawTerm, APP_NAME_SHORT,
 };
@@ -23,6 +22,7 @@ pub struct AppState {
     pub history: History,
     pub branch: Option<String>,
     pub locals: HashMap<String, String>,
+    breaker: Option<bool>,
 }
 
 #[derive(Default)]
@@ -42,13 +42,6 @@ pub struct History {
 
 pub struct Sourcer;
 
-#[derive(Debug)]
-pub enum SourceError {
-    FileError(String),
-    Lex(String),
-    Parse(String),
-    Exec(String),
-}
 
 impl AppState {
     pub fn new() -> Result<Self, Error> {
@@ -58,6 +51,7 @@ impl AppState {
             history: History::new(),
             branch: git::get_current_branch(),
             locals: HashMap::new(),
+            breaker: None,
         };
         Sourcer::source_default_path(&mut this);
         Ok(this)
@@ -67,12 +61,35 @@ impl AppState {
         self.branch = git::get_current_branch();
     }
 
-    pub fn get_var(&self, key: &str) -> String {
+    pub fn get_var(&self, key: &str) -> Option<String> {
         self.locals
             .get(key)
             .map(ToOwned::to_owned)
             .or_else(|| std::env::var(key).ok())
-            .unwrap_or_default()
+    }
+
+    pub fn enable_breaker(&mut self) {
+        self.breaker = Some(false);
+    }
+
+    pub fn disable_breaker(&mut self) {
+        self.breaker = None;
+    }
+
+    // is called when the break program is executed, if the breaker is `None` it returns false,
+    // meaning that we are not inside a loop, otherwise sets the breaker as `Some(true)` and
+    // returns true
+    pub fn toggle_breaker(&mut self) -> bool {
+        if self.breaker.is_none() {
+            return false;
+        }
+
+        self.breaker = Some(true);
+        true
+    }
+
+    pub fn should_break(&self) -> bool {
+        self.breaker.is_some() && self.breaker.unwrap()
     }
 }
 
@@ -89,7 +106,7 @@ impl Sourcer {
         }
     }
 
-    pub fn source_from_text(s: &str, app: &mut AppState) -> Result<(), SourceError> {
+    pub fn source_from_text(s: &str, app: &mut AppState) {
         let tokens: Vec<_> = Tokenizer::new(s).collect();
         let program = parser::generate_program(tokens.iter().peekable());
         for node in program {
@@ -99,23 +116,18 @@ impl Sourcer {
                 eprintln!("source: failed exec: {e}\r\n{}\r\n", node);
             }
         }
-        Ok(())
     }
 
     pub fn source_from_file<S: AsRef<Path>>(
         file: S,
         app: &mut AppState,
-    ) -> Result<(), SourceError> {
-        let Ok(mut f) = File::open(file.as_ref()) else {
-            return Err(SourceError::FileError(format!(
-                "Failed to open {}",
-                file.as_ref().to_str().unwrap_or("")
-            )));
-        };
+    ) -> Result<(), Error> {
+        let mut f = File::open(file.as_ref())?;
         let mut contents = vec![];
         let _ = f.read_to_end(&mut contents);
         let s = String::from_utf8_lossy(&contents);
-        Sourcer::source_from_text(&s, app)
+        Sourcer::source_from_text(&s, app);
+        Ok(())
     }
 
     fn get_default_path() -> PathBuf {
@@ -300,7 +312,7 @@ pub mod tests {
             ";
 
         let mut app = AppState::new().unwrap();
-        Sourcer::source_from_text(src, &mut app).unwrap();
+        Sourcer::source_from_text(src, &mut app);
         assert_eq!(app.get_var("var1"), "1".to_string());
         assert_eq!(app.get_var("var2"), "345".to_string());
         assert_eq!(app.get_var("var3"), "3".to_string());

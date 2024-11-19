@@ -74,7 +74,6 @@ pub enum Expr<'a> {
     },
     Subshell(Box<Expr<'a>>),
     Cmd(Cmd<'a>),
-    Break,
 }
 
 trait ExpectableIter {
@@ -135,7 +134,7 @@ pub fn node(mut source: TokenStream) -> Result<(TokenStream, Node), String> {
     }
 }
 
-fn pattern_match_predicate(mut source: TokenStream) -> Result<(TokenStream, Expr), String> {
+fn pattern_match_predicate(source: TokenStream) -> Result<(TokenStream, Expr), String> {
     // TODO: parse pattern match
     test_cmd_prefix(source)
 }
@@ -347,9 +346,10 @@ pub fn term(source: TokenStream) -> ParseRes {
     try_parsers!(source, _break, test_cmd_prefix, set, grouped, subshell, cmd)
 }
 
+// This accomplishes the same as cmd(["break"]) but was removed for clarity
 pub fn _break(mut source: TokenStream) -> ParseRes {
     source.expect_next(|t| matches!(t, Token::Word("break")))?;
-    Ok((source, Expr::Break))
+    Ok((source, Expr::Cmd(crate::exec::BREAK_PROGRAM)))
 }
 
 pub fn set(mut source: TokenStream) -> ParseRes {
@@ -470,7 +470,6 @@ impl Display for Expr<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Expr::Cmd(cmd) => cmd.fmt(f),
-            Expr::Break => write!(f, "break"),
             Expr::RedirInput { op, src } => write!(f, "{} < {}", op, src),
             Expr::RedirOutput { mode, op, dest } => write!(
                 f,
@@ -813,16 +812,31 @@ mod tests {
         let program = generate_program(tokens.iter().peekable());
         assert_eq!(program.len(), 1);
 
-        if let Node::Statement(Stmt::For { var, items, body }) = &program[0] {
-            assert_eq!(*var, "i");
-            assert_eq!(*items, vec!["1", "2", "3"]);
+        let expected = Node::Statement(Stmt::For {
+            var: "i",
+            items: vec!["1", "2", "3"],
+            body: vec![
+                Node::Expression(Expr::Cmd(Cmd {
+                    program: "echo",
+                    args: vec!["$i"],
+                })),
+                Node::Statement(Stmt::If {
+                    condition: Expr::Cmd(Cmd {
+                        program: "test",
+                        args: vec!["$i", "=", "2"],
+                    })
+                    .into(),
+                    then: Node::Expression(Expr::Cmd(Cmd {
+                        program: "break",
+                        args: vec![],
+                    }))
+                    .into(),
+                    or_then: None,
+                }),
+            ],
+        });
 
-            //if let Node::Statement(Stmt::Block(statements)) = &**body {
-            //    assert_eq!(statements.len(), 2);
-            //    assert!(matches!(statements[0], Node::Expression(Expr::Cmd(..))));
-            //    assert!(matches!(statements[1], Node::Statement(Stmt::If { .. })));
-            //}
-        }
+        assert_eq!(program[0], expected);
     }
 
     #[test]

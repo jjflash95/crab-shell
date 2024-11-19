@@ -69,7 +69,7 @@ fn main() -> Result<(), Error> {
 }
 
 fn exec_tree(tree: &[parser::Node], ctx: &mut AppState) -> Result<(), Error> {
-    exec_program(tree, exec::StdChannels::default(), ctx)?.wait_for(|_| true)
+    exec_program(tree, exec::StdChannels::default(), ctx)?.wait_for_or_interrupt(|_| true)
 }
 
 fn handle_new_char(app: &mut AppState, c: char) -> Result<(), Error> {

@@ -10,7 +10,7 @@ pub fn fuzzy_sort_strings<'a>(needle: &str, haystack: &'a [String]) -> Vec<Match
     let mut matched = haystack
         .iter()
         .unique()
-        .map(|c| (c, matcher.fuzzy_indices(c, &needle)))
+        .map(|c| (c, matcher.fuzzy_indices(c, needle)))
         .filter(|(_, m)| m.is_some())
         .map(|(c, m)| MatchedString::new(c, m.unwrap()))
         .collect::<Vec<_>>();

@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fs::{File, OpenOptions},
     io::{self, stderr, Error, ErrorKind, Read as _, Stderr, Stdout, Write},
     os::fd::{AsRawFd, FromRawFd as _},
@@ -22,8 +21,13 @@ use crate::{
     utils, APP_NAME_SHORT,
 };
 
-const NOOP_PROGRAM: Cmd<'static> = Cmd {
+pub const NOOP_PROGRAM: Cmd<'static> = Cmd {
     program: "true",
+    args: vec![],
+};
+
+pub const BREAK_PROGRAM: Cmd<'static> = Cmd {
+    program: "break",
     args: vec![],
 };
 
@@ -74,7 +78,9 @@ trait ErrWithCtx {
 }
 
 pub trait WaitableProcess {
+    // Wait for process to end and don't fail on manual interrupt
     fn wait_for_or_interrupt(&self, cond: impl Fn(i32) -> bool) -> Result<(), Error>;
+    // Wait for process to end with status code
     fn wait_for(&self, cond: impl Fn(i32) -> bool) -> Result<(), Error>;
 }
 
@@ -127,7 +133,7 @@ where
         exec_node(node, channels.dup()?, ctx)?.wait_for(|s| s == 0)?;
     }
 
-    exec_cmd(&NOOP_PROGRAM, channels, ctx)
+    exec_noop(channels, ctx)
 }
 
 pub fn exec_node<I, E, O>(
@@ -190,7 +196,7 @@ where
     } else if let Some(or_then) = or_else {
         exec_node(or_then, channels, ctx)
     } else {
-        exec_cmd(&NOOP_PROGRAM, channels, ctx)
+        exec_noop(channels, ctx)
     }
 }
 
@@ -206,13 +212,34 @@ where
     O: Into<Stdio> + AsRawFd + Write,
     E: Into<Stdio> + AsRawFd + Write,
 {
+    ctx.enable_breaker();
+    let res = exec_for_inner(var, items, body, channels, ctx);
+    ctx.disable_breaker();
+    res
+}
+
+pub fn exec_for_inner<I, E, O>(
+    var: &str,
+    items: &[&str],
+    body: &[Node],
+    channels: StdChannels<I, E, O>,
+    ctx: &mut AppState,
+) -> Result<Pid, Error>
+where
+    I: Into<Stdio>,
+    O: Into<Stdio> + AsRawFd + Write,
+    E: Into<Stdio> + AsRawFd + Write,
+{
     for item in items {
+        if ctx.should_break() {
+            break;
+        }
         let item = evaluate_arg(item, ctx);
         ctx.locals.insert(var.to_string(), item);
         exec_block(body, channels.dup()?, ctx)?;
     }
 
-    exec_cmd(&NOOP_PROGRAM, channels, ctx)
+    exec_noop(channels, ctx)
 }
 
 pub fn exec_while<I, E, O>(
@@ -226,13 +253,31 @@ where
     O: Into<Stdio> + AsRawFd + Write,
     E: Into<Stdio> + AsRawFd + Write,
 {
-    while exec_ast(condition, channels.dup()?, ctx)
-        .and_then(|child| child.wait_for(|c| c == 0))
-        .is_ok()
+    ctx.enable_breaker();
+    let res = exec_while_inner(condition, body, channels, ctx);
+    ctx.disable_breaker();
+    res
+}
+
+pub fn exec_while_inner<I, E, O>(
+    condition: &Expr,
+    body: &[Node],
+    channels: StdChannels<I, E, O>,
+    ctx: &mut AppState,
+) -> Result<Pid, Error>
+where
+    I: Into<Stdio>,
+    O: Into<Stdio> + AsRawFd + Write,
+    E: Into<Stdio> + AsRawFd + Write,
+{
+    while !ctx.should_break()
+        && exec_ast(condition, channels.dup()?, ctx)
+            .and_then(|child| child.wait_for(|c| c == 0))
+            .is_ok()
     {
         exec_block(body, channels.dup()?, ctx)?;
     }
-    exec_cmd(&NOOP_PROGRAM, channels, ctx)
+    exec_noop(channels, ctx)
 }
 
 pub fn exec_block<I, E, O>(
@@ -268,7 +313,6 @@ where
         Or { l, r } => exec_or(l, r, channels, ctx),
         RedirOutput { op, mode, dest } => exec_redir_out(op, dest, mode, channels, ctx),
         RedirInput { op, src } => exec_redir_inp(op, src, channels, ctx),
-        Break => todo!(),
     }
 }
 
@@ -292,10 +336,9 @@ where
     let just_in_case = err.as_raw_fd();
     let channels = StdChannels(stdin, out, clone(&err)?);
     let cmd = exec_ast(l, StdChannels(cin, stdout, err), ctx);
-    if let Err(ref e) = cmd {
+    if let Err(e) = cmd.as_ref() {
         let mut stderr = clone(&just_in_case)?;
-        stderr.write_all(format!("internal _??: {}\r\n", e.kind()).as_bytes())?;
-        stderr.flush()?;
+        write!(stderr, "internal: {}\r\n", e.kind())?;
     }
     let _ = exec_ast(r, channels, ctx)?.wait_for(|_| true); // wait here to avoid turning off raw
                                                             // mode when first command ends
@@ -330,26 +373,24 @@ where
     O: Into<Stdio> + AsRawFd + Write,
     E: Into<Stdio> + AsRawFd + Write,
 {
-    let fb_channels = channels.dup()?;
-    let just_in_case = channels.2.as_raw_fd();
-
-    match exec_ast(l, channels, ctx) {
+    match exec_ast(l, channels.dup()?, ctx) {
         Ok(child) => {
             if child.wait_for(|c| c == 0).is_ok() {
                 // HACK: since previous command has already been awaited, returning the previous
                 // commands Pid and waiting for it will error with ECHILD, so instead we create a
                 // noop and return its exit code
-                return exec_cmd(&NOOP_PROGRAM, fb_channels, ctx);
+                return exec_noop(channels, ctx);
             }
         }
         Err(e) => {
-            let mut stderr = clone(&just_in_case)?;
+            let StdChannels(_, _, err) = &channels;
+            let mut stderr = clone(&err.as_raw_fd())?;
             stderr.write_all(format!("{}: internal: {}\r\n", APP_NAME_SHORT, e).as_bytes())?;
             stderr.flush()?;
         }
     };
 
-    exec_ast(r, fb_channels, ctx)
+    exec_ast(r, channels, ctx)
 }
 
 fn exec_redir_out<I, O, E>(
@@ -426,28 +467,59 @@ where
         "git" => {
             exec_cmd_inner(cmd.program, &cmd.args, channels.dup()?, ctx)?.wait_for(|c| c == 0)?;
             ctx.reset_branch();
-            exec_cmd(&NOOP_PROGRAM, channels, ctx)
+            exec_noop(channels, ctx)
         }
         "cd" => {
             std::env::set_current_dir(cmd.args.first().copied().unwrap_or("/"))?;
             ctx.reset_branch();
-            exec_cmd(&NOOP_PROGRAM, channels, ctx)
+            exec_noop(channels, ctx)
         }
         "export" => {
             set_vars(&cmd.args, true, channels.dup()?, ctx)?;
-            exec_cmd(&NOOP_PROGRAM, channels, ctx)
+            exec_noop(channels, ctx)
         }
         "set" => {
             set_vars(&cmd.args, false, channels.dup()?, ctx)?;
-            exec_cmd(&NOOP_PROGRAM, channels, ctx)
+            exec_noop(channels, ctx)
         }
         "source" | "." => {
             source(&cmd.args, ctx)?;
-            exec_cmd(&NOOP_PROGRAM, channels, ctx)
+            exec_noop(channels, ctx)
+        }
+        "colorscheme" => {
+            const DEFAULTS: &[&str] = &[
+                include_str!("../themes/blue.cs"),
+                include_str!("../themes/boke.cs"),
+            ];
+
+            for arg in &cmd.args {
+                match *arg {
+                    "blue" => Sourcer::source_from_text(DEFAULTS[0], ctx),
+                    "boke" => Sourcer::source_from_text(DEFAULTS[0], ctx),
+                    _ => source(&[arg], ctx)?,
+                }
+            }
+
+            exec_noop(channels, ctx)
+        }
+        "break" => {
+            if !ctx.toggle_breaker() {
+                return Err(Error::new(ErrorKind::Other, "break called outside loop"));
+            };
+            exec_noop(channels, ctx)
         }
         "exit" => std::process::exit(0),
         program => exec_cmd_inner(program, &cmd.args, channels, ctx),
     }
+}
+
+fn exec_noop<I, O, E>(channels: StdChannels<I, O, E>, ctx: &mut AppState) -> Result<Pid, Error>
+where
+    I: Into<Stdio>,
+    O: Into<Stdio> + AsRawFd + Write,
+    E: Into<Stdio> + AsRawFd + Write,
+{
+    exec_cmd(&NOOP_PROGRAM, channels, ctx)
 }
 
 fn exec_cmd_inner<I, O, E>(
@@ -462,7 +534,7 @@ where
     E: Into<Stdio> + AsRawFd + Write,
 {
     let (stdin, stdout, stderr) = channels.inner();
-
+    dbg!(&args);
     let args: Vec<_> = args
         .iter()
         .map(|s| utils::remove_escape_codes(s))
@@ -498,11 +570,11 @@ fn expand(token: &ArgToken, ctx: &mut AppState) -> Result<String, Error> {
     match token {
         Whitespace(ws) => Ok(ws.to_string()),
         Word(word) => Ok(word.to_string()),
-        Variable(name) => Ok(ctx.get_var(name).to_owned()),
+        Variable(name) => Ok(ctx.get_var(name).unwrap_or_default().to_owned()),
         Quoted(s) => Ok(evaluate_arg(s, ctx)),
         CmdExpansion(cmd) => parse_exec_and_output(cmd, ctx),
-        VariableExpr(expr) => Ok(ctx.get_var(expr).to_owned()), // TODO: make replacements, i.e.
-                                                                // VAR=hello ${VAR/o/O} => hellO
+        VariableExpr(expr) => Ok(ctx.get_var(expr).unwrap_or_default().to_owned()), // TODO: make replacements, i.e.
+                                                                                    // VAR=hello ${VAR/o/O} => hellO
     }
 }
 
@@ -542,7 +614,10 @@ where
 
 fn source(args: &[&str], ctx: &mut AppState) -> Result<(), Error> {
     for arg in args {
-        Sourcer::source_from_file(evaluate_arg(arg, ctx), ctx);
+        let file = evaluate_arg(arg, ctx);
+        if let Err(e) = Sourcer::source_from_file(&file, ctx) {
+            eprintln!("failed sourcing {file}: {e}");
+        }
     }
 
     Ok(())
