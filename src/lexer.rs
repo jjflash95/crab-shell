@@ -177,10 +177,6 @@ impl<'a> Tokenizer<'a> {
                     Some(Redirect(RedirOp::Output))
                 }
             }
-            Some((i, '\\')) => {
-                let _ = self.lexer.take_subslice(1 + i);
-                self.next_token()
-            }
             Some((i, '\n')) => {
                 let _ = self.lexer.take_subslice(1 + i);
                 Some(Newline)
@@ -226,7 +222,7 @@ impl<'a> Tokenizer<'a> {
                 let _ = self.lexer.take_while(|c| c.is_whitespace());
                 self.next()
             }
-            Some(_) => Some(Token::from(self.lexer.take_word())),
+            Some(_) => Some(Token::from(self.lexer.take_escaped_word())),
             None => None,
         }
     }
@@ -264,6 +260,27 @@ impl<'a> Lexer<'a> {
         self.take_subslice(range)
     }
 
+    pub fn take_while_escaped<F: Fn(char) -> bool>(&mut self, pred: F) -> &'a str {
+        let mut iterable = self.as_iter();
+        let mut escaped = false;
+        while let Some((_, c)) = iterable.peek() {
+            if *c == '\\' {
+                escaped = true;
+                let _ = iterable.next();
+                continue;
+            };
+
+            if !escaped && !pred(*c) {
+                break;
+            }
+            let _ = iterable.next();
+            escaped = false;
+        }
+
+        let range = iterable.peek().map(|(i, _)| *i).unwrap_or(self.slice.len());
+        self.take_subslice(range)
+    }
+
     pub fn quoted_str(&mut self) -> Option<&'a str> {
         let mut iterable = self.as_iter();
         let (_, opening_quote) = iterable.next().unwrap();
@@ -276,6 +293,16 @@ impl<'a> Lexer<'a> {
         }
 
         None
+    }
+
+    pub fn take_escaped_word(&mut self) -> &'a str {
+        self.take_while_escaped(|c| {
+            !c.is_whitespace()
+                && !matches!(
+                    c,
+                    '\n' | '|' | '&' | '<' | '>' | '(' | ')' | '{' | '}' | ';' | '[' | ']'
+                )
+        })
     }
 
     pub fn take_word(&mut self) -> &'a str {

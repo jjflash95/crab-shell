@@ -9,7 +9,8 @@ use std::{
 use termion::{cursor, raw::IntoRawMode as _};
 
 use crate::{
-    exec::{exec_node, StdChannels, WaitableProcess as _}, git,
+    exec::{exec_node, StdChannels, WaitableProcess as _},
+    git,
     lexer::Tokenizer,
     parser, RawTerm, APP_NAME_SHORT,
 };
@@ -41,7 +42,6 @@ pub struct History {
 }
 
 pub struct Sourcer;
-
 
 impl AppState {
     pub fn new() -> Result<Self, Error> {
@@ -118,10 +118,7 @@ impl Sourcer {
         }
     }
 
-    pub fn source_from_file<S: AsRef<Path>>(
-        file: S,
-        app: &mut AppState,
-    ) -> Result<(), Error> {
+    pub fn source_from_file<S: AsRef<Path>>(file: S, app: &mut AppState) -> Result<(), Error> {
         let mut f = File::open(file.as_ref())?;
         let mut contents = vec![];
         let _ = f.read_to_end(&mut contents);
@@ -313,10 +310,10 @@ pub mod tests {
 
         let mut app = AppState::new().unwrap();
         Sourcer::source_from_text(src, &mut app);
-        assert_eq!(app.get_var("var1"), "1".to_string());
-        assert_eq!(app.get_var("var2"), "345".to_string());
-        assert_eq!(app.get_var("var3"), "3".to_string());
-        assert_eq!(app.get_var("var4"), "4".to_string());
-        assert_eq!(app.get_var("var5"), "5".to_string());
+        assert_eq!(app.get_var("var1"), Some("1".to_string()));
+        assert_eq!(app.get_var("var2"), Some("345".to_string()));
+        assert_eq!(app.get_var("var3"), Some("3".to_string()));
+        assert_eq!(app.get_var("var4"), Some("4".to_string()));
+        assert_eq!(app.get_var("var5"), Some("5".to_string()));
     }
 }

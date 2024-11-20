@@ -33,12 +33,12 @@ pub enum Node<'a> {
 #[derive(Debug, PartialEq)]
 pub enum Stmt<'a> {
     If {
-        condition: Box<Expr<'a>>,
+        cond: Box<Expr<'a>>,
         then: Box<Node<'a>>,
         or_then: Option<Box<Node<'a>>>,
     },
     While {
-        condition: Box<Expr<'a>>,
+        cond: Box<Expr<'a>>,
         body: Vec<Node<'a>>,
     },
     For {
@@ -161,7 +161,7 @@ fn test_cmd_prefix(mut source: TokenStream) -> Result<(TokenStream, Expr), Strin
 fn if_node(mut source: TokenStream) -> Result<(TokenStream, Stmt), String> {
     source.expect_next(|t| matches!(t, Token::If))?;
 
-    let (mut source, condition) = if source.peek() == Some(&&Token::LBracket) {
+    let (mut source, cond) = if source.peek() == Some(&&Token::LBracket) {
         test_cmd_prefix(source)?
     } else {
         ast(source)?
@@ -185,8 +185,8 @@ fn if_node(mut source: TokenStream) -> Result<(TokenStream, Stmt), String> {
     Ok((
         source,
         Stmt::If {
-            condition: Box::new(condition),
-            then: Box::new(then),
+            cond: cond.into(),
+            then: then.into(),
             or_then,
         },
     ))
@@ -194,7 +194,7 @@ fn if_node(mut source: TokenStream) -> Result<(TokenStream, Stmt), String> {
 
 fn while_node(mut source: TokenStream) -> Result<(TokenStream, Stmt), String> {
     source.expect_next(|t| matches!(t, Token::While))?;
-    let (mut source, condition) = ast(source)?;
+    let (mut source, cond) = ast(source)?;
     let _ = source.expect_next(|t| matches!(t, Token::Semicolon))?;
     source.expect_next(|t| matches!(t, Token::Do))?;
 
@@ -210,7 +210,7 @@ fn while_node(mut source: TokenStream) -> Result<(TokenStream, Stmt), String> {
     Ok((
         source,
         Stmt::While {
-            condition: Box::new(condition),
+            cond: cond.into(),
             body,
         },
     ))
@@ -427,11 +427,11 @@ impl Display for Stmt<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Stmt::If {
-                condition,
+                cond,
                 then,
                 or_then,
             } => {
-                write!(f, "if {}; then\r\n{}", condition, then)?;
+                write!(f, "if {}; then\r\n{}", cond, then)?;
                 if let Some(or_then) = or_then {
                     write!(f, "\r\n{}", or_then)?;
                 }
@@ -455,8 +455,8 @@ impl Display for Stmt<'_> {
                 }
                 write!(f, "\r\n}}")
             }
-            Stmt::While { condition, body } => {
-                write!(f, "while {} do;", condition)?;
+            Stmt::While { cond, body } => {
+                write!(f, "while {} do;", cond)?;
                 for node in body {
                     write!(f, "\r\n{}", node)?;
                 }
@@ -728,12 +728,12 @@ mod tests {
         }
 
         if let Node::Statement(Stmt::If {
-            condition,
+            cond,
             then,
             or_then,
         }) = &program[1]
         {
-            assert!(matches!(**condition, Expr::Cmd(Cmd { program, .. }) if program == "test"));
+            assert!(matches!(**cond, Expr::Cmd(Cmd { program, .. }) if program == "test"));
             assert!(
                 matches!(**then, Node::Expression(Expr::Cmd(Cmd { program, .. })) if program == "echo")
             );
@@ -758,7 +758,7 @@ mod tests {
         assert_eq!(program.len(), 2);
 
         let expected = Node::Statement(Stmt::If {
-            condition: Box::new(Expr::Cmd(Cmd {
+            cond: Box::new(Expr::Cmd(Cmd {
                 program: "test",
                 args: vec!["-f", "file.txt"],
             })),
@@ -785,7 +785,7 @@ mod tests {
         assert_eq!(program[0], expected);
 
         let expected = Node::Statement(Stmt::While {
-            condition: Box::new(Expr::Cmd(Cmd {
+            cond: Box::new(Expr::Cmd(Cmd {
                 program: "true",
                 args: vec![],
             })),
@@ -821,7 +821,7 @@ mod tests {
                     args: vec!["$i"],
                 })),
                 Node::Statement(Stmt::If {
-                    condition: Expr::Cmd(Cmd {
+                    cond: Expr::Cmd(Cmd {
                         program: "test",
                         args: vec!["$i", "=", "2"],
                     })
@@ -896,7 +896,7 @@ mod tests {
         }));
 
         let expected1 = Node::Statement(Stmt::If {
-            condition: Expr::Cmd(Cmd {
+            cond: Expr::Cmd(Cmd {
                 program: "test",
                 args: vec!["true"],
             })
@@ -971,5 +971,6 @@ mod tests {
         let cmd = "for i in; do echo bad; done";
         let tokens = Tokenizer::new(cmd).collect::<Vec<_>>();
         let program = generate_program(tokens.iter().peekable());
+        assert!(program.is_empty());
     }
 }

@@ -6,6 +6,7 @@ use std::{
 };
 
 use nix::{
+    libc::abort,
     sys::{
         signal::Signal,
         wait::{waitpid, WaitStatus},
@@ -129,11 +130,16 @@ where
     O: Into<Stdio> + AsRawFd + Write,
     E: Into<Stdio> + AsRawFd + Write,
 {
+    let (nodes, tail) = match nodes {
+        [] => return Err(Error::new(ErrorKind::Other, "empty program")),
+        [nodes @ .., tail] => (nodes, tail),
+    };
+
     for node in nodes {
         exec_node(node, channels.dup()?, ctx)?.wait_for(|s| s == 0)?;
     }
 
-    exec_noop(channels, ctx)
+    exec_node(tail, channels, ctx)
 }
 
 pub fn exec_node<I, E, O>(
@@ -166,18 +172,18 @@ where
 
     match stmt {
         If {
-            condition,
+            cond,
             then,
             or_then,
-        } => exec_if(condition, then, or_then.as_deref(), channels, ctx),
+        } => exec_if(cond, then, or_then.as_deref(), channels, ctx),
         For { var, items, body } => exec_for(var, items, body, channels, ctx),
-        While { condition, body } => exec_while(condition, body, channels, ctx),
+        While { cond, body } => exec_while(cond, body, channels, ctx),
         Block(nodes) => exec_block(nodes, channels, ctx),
     }
 }
 
 pub fn exec_if<I, E, O>(
-    condition: &Expr,
+    cond: &Expr,
     then: &Node,
     or_else: Option<&Node>,
     channels: StdChannels<I, E, O>,
@@ -188,7 +194,7 @@ where
     O: Into<Stdio> + AsRawFd + Write,
     E: Into<Stdio> + AsRawFd + Write,
 {
-    if exec_ast(condition, channels.dup()?, ctx)?
+    if exec_ast(cond, channels.dup()?, ctx)?
         .wait_for(|c| c == 0)
         .is_ok()
     {
@@ -243,7 +249,7 @@ where
 }
 
 pub fn exec_while<I, E, O>(
-    condition: &Expr,
+    cond: &Expr,
     body: &[Node],
     channels: StdChannels<I, E, O>,
     ctx: &mut AppState,
@@ -254,13 +260,13 @@ where
     E: Into<Stdio> + AsRawFd + Write,
 {
     ctx.enable_breaker();
-    let res = exec_while_inner(condition, body, channels, ctx);
+    let res = exec_while_inner(cond, body, channels, ctx);
     ctx.disable_breaker();
     res
 }
 
 pub fn exec_while_inner<I, E, O>(
-    condition: &Expr,
+    cond: &Expr,
     body: &[Node],
     channels: StdChannels<I, E, O>,
     ctx: &mut AppState,
@@ -271,7 +277,7 @@ where
     E: Into<Stdio> + AsRawFd + Write,
 {
     while !ctx.should_break()
-        && exec_ast(condition, channels.dup()?, ctx)
+        && exec_ast(cond, channels.dup()?, ctx)
             .and_then(|child| child.wait_for(|c| c == 0))
             .is_ok()
     {
@@ -534,7 +540,7 @@ where
     E: Into<Stdio> + AsRawFd + Write,
 {
     let (stdin, stdout, stderr) = channels.inner();
-    dbg!(&args);
+
     let args: Vec<_> = args
         .iter()
         .map(|s| utils::remove_escape_codes(s))
