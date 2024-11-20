@@ -14,7 +14,7 @@ use lexer::Tokenizer;
 use nav::*;
 use utils::*;
 
-use exec::{exec_program, WaitableProcess as _};
+use exec::{exec_program, WaitableProcess};
 use std::io::{stdin, Error, Stdin, Write as _};
 use termion::{
     clear, cursor,
@@ -68,8 +68,8 @@ fn main() -> Result<(), Error> {
     Ok(())
 }
 
-fn exec_tree(tree: &[parser::Node], ctx: &mut AppState) -> Result<(), Error> {
-    exec_program(tree, exec::StdChannels::default(), ctx)?.wait_for_or_interrupt(|_| true)
+fn exec_tree(tree: &[parser::Node], ctx: &mut AppState) -> Result<nix::unistd::Pid, Error> {
+    exec_program(tree, exec::StdChannels::default(), ctx)
 }
 
 fn handle_new_char(app: &mut AppState, c: char) -> Result<(), Error> {
@@ -161,8 +161,11 @@ fn handle_exec(app: &mut AppState) -> Result<(), Error> {
     let program = parser::generate_program(tokens.iter().peekable());
 
     app.term.suspend_raw_mode()?;
-    if let Err(e) = exec_tree(&program, app) {
-        eprintln!("{}: internal: {}", APP_NAME_SHORT, e);
+    match exec_tree(&program, app) {
+        Ok(pid) => {
+            let _ = pid.wait_for_or_interrupt(|_| true);
+        }
+        Err(e) => eprintln!("{APP_NAME_SHORT}: internal: {e}"),
     }
 
     app.history.push(text);
