@@ -5,7 +5,7 @@ use std::{
     fmt::Display,
     fs::{DirEntry, FileType},
     io::{Error, Stdout, Write},
-    os::unix::{ffi::OsStrExt, fs::FileTypeExt},
+    os::unix::{ffi::OsStrExt, fs::FileTypeExt}, path::PathBuf,
 };
 use termion::{
     clear,
@@ -329,12 +329,6 @@ pub fn entry_to_path_str(e: &DirEntry) -> String {
     String::from_utf8_lossy(e.path().as_os_str().as_bytes()).to_string()
 }
 
-pub fn entry_to_filename_str(e: &DirEntry) -> String {
-    let path = e.path();
-    let path_str = path.file_name().unwrap_or_else(|| path.as_os_str());
-    String::from_utf8_lossy(path_str.as_bytes()).to_string()
-}
-
 fn get_styled_search_result(ft: Option<FileType>) -> SearchResult {
     match ft {
         Some(ft) if ft.is_file() => SearchResult::File,
@@ -352,7 +346,7 @@ pub fn get_formatted_dirs(
 ) -> Vec<String> {
     let max_name_length = dirs
         .iter()
-        .map(|e| entry_to_filename_str(e).len())
+        .map(|e| entry_to_path_str(e).len())
         .max()
         .unwrap_or(0);
 
@@ -376,7 +370,7 @@ pub fn get_formatted_dirs(
         current += &format!(
             "{}{:<column_width$}{}",
             style.color_fg(),
-            entry_to_filename_str(dir),
+            entry_to_path_str(dir),
             termion::style::Reset
         );
         if (i + 1) % columns == 0 {
@@ -410,7 +404,7 @@ fn comp_dir_entries(a: &DirEntry, b: &DirEntry) -> Ordering {
     }
 }
 
-pub fn get_common_substring(dirs: &[DirEntry]) -> Option<String> {
+pub fn get_dir_common_substring(dirs: &[DirEntry]) -> Option<String> {
     let stringified: Vec<String> = dirs.iter().map(entry_to_path_str).collect();
     if stringified.is_empty() {
         return None;
@@ -424,18 +418,29 @@ pub fn get_common_substring(dirs: &[DirEntry]) -> Option<String> {
     Some(common.to_string())
 }
 
+
+pub fn get_common_substring(entries: &[String]) -> Option<String> {
+    let first = entries[0].as_ref();
+    let common = entries[1..]
+        .iter()
+        .fold(first, |acc, s| common_prefix(acc, s));
+
+    Some(common.to_string())
+}
+
 fn common_prefix<'a>(a: &'a str, b: &'a str) -> &'a str {
     let min_len = a.len().min(b.len());
     let mut end = 0;
+
     for i in 0..min_len {
         if a.as_bytes()[i] == b.as_bytes()[i] {
-            end = i;
+            end = i + 1;
         } else {
             break;
         }
     }
 
-    &a[0..end + 1]
+    &a[0..end]
 }
 
 pub mod gradient {

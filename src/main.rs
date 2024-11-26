@@ -1,4 +1,5 @@
 mod app;
+mod autocomp;
 mod exec;
 mod expand;
 mod frontend;
@@ -173,13 +174,49 @@ fn handle_exec(app: &mut AppState) -> Result<(), Error> {
     prompt(app)
 }
 
+fn handle_custom_suggestions(
+    app: &mut AppState,
+    leading: &str,
+    cmd: &str,
+    tip: &str,
+    mut suggestions: Vec<String>,
+) -> Result<(), Error> {
+    suggestions.retain(|s| s.starts_with(tip));
+    match suggestions.len() {
+        0 => {}
+        1 => {
+            let completion = &suggestions[0];
+            let current = cmd_from_parts(leading, cmd, completion);
+            app.buf.left = current.chars().collect();
+            write!(app.term, "\r{}", clear::AfterCursor)?;
+            prompt(app)?;
+        }
+        _ => {
+            if let Some(common) = get_common_substring(&suggestions) {
+                let current = cmd_from_parts(leading, cmd, &common);
+                app.buf.left = current.chars().collect();
+            }
+            write!(app.term, "\r{}\n", clear::AfterCursor)?;
+            write!(app.term, "{}", suggestions.join("\n"))?;
+            write!(app.term, "{}", cursor::Up(suggestions.len() as u16))?;
+            prompt(app)?;
+        }
+    }
+
+    app.term.activate_raw_mode()
+}
+
 fn handle_autocomplete(app: &mut AppState) -> Result<(), Error> {
     app.term.suspend_raw_mode()?;
     let current = app.buf.left.iter().collect::<String>();
     let (start, rest) = split_last_unescaped(&current, utils::is_control_flow);
-    let (middle, tip) = split_last_unescaped(rest, utils::is_whitespace);
+    let (cmd, tip) = split_last_unescaped(rest, utils::is_whitespace);
     let tip = expand_home_symbol(tip.trim_start());
     let tip = remove_escape_codes(&tip);
+
+    if let Some(suggestions) = autocomp::suggest_autocomp(rest) {
+        return handle_custom_suggestions(app, start, cmd, &tip, suggestions);
+    }
 
     let Some(dirs) = Navigator::list_or_parent(&tip) else {
         return Ok(());
@@ -197,7 +234,7 @@ fn handle_autocomplete(app: &mut AppState) -> Result<(), Error> {
             let completion = &targets[0];
             let current = cmd_from_parts(
                 start,
-                middle,
+                cmd,
                 &add_escape_codes(&entry_to_path_str(completion)),
             );
             app.buf.left = current.chars().collect();
@@ -206,8 +243,8 @@ fn handle_autocomplete(app: &mut AppState) -> Result<(), Error> {
             prompt(app)?;
         }
         _ => {
-            if let Some(common) = get_common_substring(targets.as_slice()) {
-                let current = cmd_from_parts(start, middle, &common);
+            if let Some(common) = get_dir_common_substring(targets.as_slice()) {
+                let current = cmd_from_parts(start, cmd, &add_escape_codes(&common));
                 app.buf.left = current.chars().collect();
             }
             let fmt_dirs = get_formatted_dirs(targets.as_slice(), terminal_size()?.0, None);
