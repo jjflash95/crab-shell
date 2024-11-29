@@ -26,24 +26,14 @@ use termion::{
 };
 
 #[allow(dead_code)]
-const APP_NAME: &str = "what-the-shell";
-const APP_NAME_SHORT: &str = "wsh";
-const STYLED_SCREEN: &str = r#"
-           __          __     __  __                 __         ____
- _      __/ /_  ____ _/ /_   / /_/ /_  ___     _____/ /_  ___  / / /
-| | /| / / __ \/ __ `/ __/  / __/ __ \/ _ \   / ___/ __ \/ _ \/ / / 
-| |/ |/ / / / / /_/ / /_   / /_/ / / /  __/  (__  ) / / /  __/ / /  
-|__/|__/_/ /_/\__,_/\__/   \__/_/ /_/\___/  /____/_/ /_/\___/_/_/   
-"#;
+const APP_NAME: &str = "crab";
+const APP_NAME_SHORT: &str = "csh";
 
 fn main() -> Result<(), Error> {
     ctrlc::set_handler(move || {}).expect("Error setting Ctrl-C handler");
     let mut app = AppState::new()?;
     let mut input = stdin().keys();
 
-    for line in STYLED_SCREEN.split('\n') {
-        gradient::print_gradient(line, SALMON, MUSK_GREEN, &mut app.term)?;
-    }
     prompt(&mut app)?;
 
     while let Some(Ok(key)) = input.next() {
@@ -61,7 +51,6 @@ fn main() -> Result<(), Error> {
             Key::Ctrl('F') => handle_fuzzy_find(&mut app, &mut input)?,
             Key::Ctrl('f') => handle_fuzzy_find(&mut app, &mut input)?,
             Key::Ctrl('c') => handle_ctrlc(&mut app)?,
-            Key::Ctrl('D') => break,
             _ => {}
         }
     }

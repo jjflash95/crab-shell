@@ -446,7 +446,7 @@ fn common_prefix<'a>(a: &'a str, b: &'a str) -> &'a str {
 pub mod gradient {
     use super::*;
 
-    pub fn print_gradient(
+    pub fn print(
         line: &str,
         Rgb(sr, sg, sb): Rgb,
         Rgb(er, eg, eb): Rgb,

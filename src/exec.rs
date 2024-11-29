@@ -5,8 +5,8 @@ use std::{
     process::{Command, Stdio},
 };
 
+use glob::glob;
 use nix::{
-    libc::abort,
     sys::{
         signal::Signal,
         wait::{waitpid, WaitStatus},
@@ -545,6 +545,7 @@ where
         .iter()
         .map(|s| utils::remove_escape_codes(s))
         .map(|s| evaluate_arg(&s, ctx))
+        .flat_map(expand_wildcards)
         .collect();
 
     let child = Command::new(program)
@@ -584,6 +585,25 @@ fn expand(token: &ArgToken, ctx: &mut AppState) -> Result<String, Error> {
     }
 }
 
+fn expand_wildcards(text: String) -> Vec<String> {
+    let Ok(paths) = glob(&text) else {
+        return vec![text];
+    };
+
+    let paths = paths
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p.to_str().map(str::to_string))
+        .filter(|p| p != "./." && p != "./..")
+        .collect::<Vec<_>>();
+
+    if paths.is_empty() {
+        vec![text]
+    } else {
+        paths
+    }
+}
+
 fn parse_exec_and_output(cmd: &str, ctx: &mut AppState) -> Result<String, Error> {
     let tokenized = Tokenizer::new(cmd).collect::<Vec<_>>();
     let tokens = tokenized.iter().peekable();
@@ -601,6 +621,9 @@ fn parse_exec_and_output(cmd: &str, ctx: &mut AppState) -> Result<String, Error>
     let mut output = String::new();
     let mut reader = io::BufReader::new(read);
     reader.read_to_string(&mut output)?;
+    if output.ends_with('\n') {
+        output.pop();
+    }
     Ok(output)
 }
 
