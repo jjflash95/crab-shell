@@ -1,6 +1,6 @@
 use std::{
     fs::{File, OpenOptions},
-    io::{self, stderr, Error, ErrorKind, Read as _, Stderr, Stdout, Write},
+    io::{self, stderr, stdout, Error, ErrorKind, Read as _, Stderr, Stdout, Write},
     os::fd::{AsRawFd, FromRawFd as _},
     process::{Command, Stdio},
 };
@@ -13,6 +13,7 @@ use nix::{
     },
     unistd::{dup, fork, ForkResult, Pid},
 };
+use termion::raw::IntoRawMode as _;
 
 use crate::{
     app::{AppState, Sourcer},
@@ -25,11 +26,13 @@ use crate::{
 pub const NOOP_PROGRAM: Cmd<'static> = Cmd {
     program: "true",
     args: vec![],
+    _async: false,
 };
 
 pub const BREAK_PROGRAM: Cmd<'static> = Cmd {
     program: "break",
     args: vec![],
+    _async: false,
 };
 
 pub struct StdChannels<I, O, E>(pub I, pub O, pub E);
@@ -515,7 +518,10 @@ where
             exec_noop(channels, ctx)
         }
         "exit" => std::process::exit(0),
-        program => exec_cmd_inner(program, &cmd.args, channels, ctx),
+        program => match cmd._async {
+            false => exec_cmd_inner(program, &cmd.args, channels, ctx),
+            _ => exec_cmd_forked(program, &cmd.args, channels, ctx),
+        },
     }
 }
 
@@ -557,6 +563,58 @@ where
         .add_ctx(program)?;
 
     Ok(Pid::from_raw(child.id() as i32))
+}
+
+fn exec_cmd_forked<I, O, E>(
+    program: &str,
+    args: &[&str],
+    channels: StdChannels<I, O, E>,
+    ctx: &mut AppState,
+) -> Result<Pid, Error>
+where
+    I: Into<Stdio>,
+    O: Into<Stdio> + AsRawFd + Write,
+    E: Into<Stdio> + AsRawFd + Write,
+{
+    let (stdin, stdout, stderr) = channels.inner();
+
+    let args: Vec<_> = args
+        .iter()
+        .map(|s| utils::remove_escape_codes(s))
+        .map(|s| evaluate_arg(&s, ctx))
+        .flat_map(expand_wildcards)
+        .collect();
+
+    let mut child = Command::new(program)
+        .args(args.clone())
+        .stdin(stdin)
+        .stdout(stdout)
+        .stderr(stderr)
+        .spawn()
+        .add_ctx(program)?;
+
+    write!(io::stdout(), "[async] {}\r\n", child.id())?;
+    io::stdout().flush()?;
+    let program = program.to_string();
+    let t = std::thread::spawn(move || {
+        let out = io::stdout().into_raw_mode()?;
+        drop(out);
+        let ecode = child.wait().unwrap_or_default().code().unwrap_or(420);
+        write!(
+            io::stdout(),
+            "\r[async] {} => [{}] + done {program} {}\r\n",
+            child.id(),
+            ecode,
+            args.join(" "),
+        )?;
+        io::stdout().flush()?;
+        let out = io::stdout().into_raw_mode()?;
+        std::mem::forget(out);
+        Ok::<(), Error>(())
+    });
+    std::mem::forget(t);
+
+    exec_noop(StdChannels::default(), ctx)
 }
 
 fn evaluate_arg(arg: &str, ctx: &mut AppState) -> String {

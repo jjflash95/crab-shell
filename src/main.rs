@@ -147,10 +147,10 @@ fn handle_exec(app: &mut AppState) -> Result<(), Error> {
         &format!("{}\r❯ {}\r\n", clear::CurrentLine, &text.trim()),
     )?;
 
+    app.term.suspend_raw_mode()?;
     let tokens = Tokenizer::new(&text).collect::<Vec<_>>();
     let program = parser::generate_program(tokens.iter().peekable());
 
-    app.term.suspend_raw_mode()?;
     match exec_tree(&program, app) {
         Ok(pid) => {
             let _ = pid.wait_for_or_interrupt(|_| true);

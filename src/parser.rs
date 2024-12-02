@@ -22,6 +22,7 @@ pub enum FileMode {
 pub struct Cmd<'a> {
     pub program: &'a str,
     pub args: Vec<&'a str>,
+    pub _async: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -141,7 +142,15 @@ fn pattern_match_predicate(source: TokenStream) -> Result<(TokenStream, Expr), S
 
 fn test_cmd_prefix(mut source: TokenStream) -> Result<(TokenStream, Expr), String> {
     source.expect_next(|t| matches!(t, Token::LBracket))?;
-    let (mut source, Expr::Cmd(Cmd { program, args })) = cmd(source)? else {
+    let (
+        mut source,
+        Expr::Cmd(Cmd {
+            program,
+            args,
+            _async,
+        }),
+    ) = cmd(source)?
+    else {
         Err("expected command".to_string())?
     };
 
@@ -154,6 +163,7 @@ fn test_cmd_prefix(mut source: TokenStream) -> Result<(TokenStream, Expr), Strin
         Expr::Cmd(Cmd {
             program: "test",
             args: exp_args,
+            _async,
         }),
     ))
 }
@@ -364,6 +374,7 @@ pub fn set(mut source: TokenStream) -> ParseRes {
     let cmd = Cmd {
         program: "set",
         args: vec![text],
+        _async: false,
     };
     Ok((source, Expr::Cmd(cmd)))
 }
@@ -396,7 +407,16 @@ pub fn cmd(mut source: TokenStream) -> ParseRes {
         }
         args.push(source.next().unwrap().into_str());
     }
-    let expr = Expr::Cmd(Cmd { program, args });
+    let _async = source
+        .expect_next(|t| matches!(t, Token::Background))
+        .map(|_| true)
+        .unwrap_or_default();
+
+    let expr = Expr::Cmd(Cmd {
+        program,
+        args,
+        _async,
+    });
     Ok((source, expr))
 }
 
@@ -510,6 +530,7 @@ mod tests {
         let expected = Expr::Cmd(Cmd {
             program: "ls",
             args: vec!["-la"],
+            _async: false,
         });
 
         assert!(rest.collect::<Vec<_>>().is_empty());
@@ -526,10 +547,12 @@ mod tests {
             l: Box::new(Expr::Cmd(Cmd {
                 program: "echo",
                 args: vec!["a"],
+                _async: false,
             })),
             r: Box::new(Expr::Cmd(Cmd {
                 program: "echo",
                 args: vec!["b"],
+                _async: false,
             })),
         };
 
@@ -547,10 +570,12 @@ mod tests {
             l: Box::new(Expr::Cmd(Cmd {
                 program: "grep",
                 args: vec!["pattern"],
+                _async: false,
             })),
             r: Box::new(Expr::Cmd(Cmd {
                 program: "echo",
                 args: vec!["not found"],
+                _async: false,
             })),
         };
 
@@ -568,10 +593,12 @@ mod tests {
             l: Box::new(Expr::Cmd(Cmd {
                 program: "ls",
                 args: vec![],
+                _async: false,
             })),
             r: Box::new(Expr::Cmd(Cmd {
                 program: "grep",
                 args: vec![".rs"],
+                _async: false,
             })),
         };
 
@@ -590,6 +617,7 @@ mod tests {
             op: Box::new(Expr::Cmd(Cmd {
                 program: "echo",
                 args: vec!["hello"],
+                _async: false,
             })),
             dest: "output.txt",
         };
@@ -609,6 +637,7 @@ mod tests {
             op: Box::new(Expr::Cmd(Cmd {
                 program: "echo",
                 args: vec!["hello"],
+                _async: false,
             })),
             dest: "output.txt",
         };
@@ -627,6 +656,7 @@ mod tests {
             op: Box::new(Expr::Cmd(Cmd {
                 program: "wc",
                 args: vec![],
+                _async: false,
             })),
             src: "input.txt",
         };
@@ -644,6 +674,7 @@ mod tests {
         let expected = Expr::Subshell(Box::new(Expr::Cmd(Cmd {
             program: "echo",
             args: vec!["hello"],
+            _async: false,
         })));
 
         assert!(rest.collect::<Vec<_>>().is_empty());
@@ -661,12 +692,14 @@ mod tests {
                 l: Box::new(Expr::Cmd(Cmd {
                     program: "ls",
                     args: vec!["-l"],
+                    _async: false,
                 })),
                 r: Box::new(Expr::RedirOutput {
                     mode: FileMode::Truncate,
                     op: Box::new(Expr::Cmd(Cmd {
                         program: "grep",
                         args: vec![".rs"],
+                        _async: false,
                     })),
                     dest: "output.txt",
                 }),
@@ -674,6 +707,7 @@ mod tests {
             r: Box::new(Expr::Cmd(Cmd {
                 program: "echo",
                 args: vec!["done"],
+                _async: false,
             })),
         };
         assert!(rest.collect::<Vec<_>>().is_empty());
@@ -689,6 +723,7 @@ mod tests {
         let expected = Expr::Cmd(Cmd {
             program: "echo",
             args: vec!["$(ls $(pwd))"],
+            _async: false,
         });
 
         assert!(rest.collect::<Vec<_>>().is_empty());
@@ -704,6 +739,7 @@ mod tests {
         let expected = Expr::Cmd(Cmd {
             program: "git",
             args: vec!["commit", "-m", "initial commit"],
+            _async: false,
         });
 
         assert!(rest.collect::<Vec<_>>().is_empty());
@@ -761,17 +797,20 @@ mod tests {
             cond: Box::new(Expr::Cmd(Cmd {
                 program: "test",
                 args: vec!["-f", "file.txt"],
+                _async: false,
             })),
             then: Box::new(Node::Expression(Expr::Pipe {
                 l: Box::new(Expr::Cmd(Cmd {
                     program: "cat",
                     args: vec!["file.txt"],
+                    _async: false,
                 })),
                 r: Box::new(Expr::RedirOutput {
                     mode: FileMode::Truncate,
                     op: Box::new(Expr::Cmd(Cmd {
                         program: "grep",
                         args: vec!["pattern"],
+                        _async: false,
                     })),
                     dest: "output.txt",
                 }),
@@ -779,6 +818,7 @@ mod tests {
             or_then: Some(Box::new(Node::Expression(Expr::Cmd(Cmd {
                 program: "echo",
                 args: vec!["file not found"],
+                _async: false,
             })))),
         });
 
@@ -788,10 +828,12 @@ mod tests {
             cond: Box::new(Expr::Cmd(Cmd {
                 program: "true",
                 args: vec![],
+                _async: false,
             })),
             body: vec![Node::Expression(Expr::Cmd(Cmd {
                 program: "echo",
                 args: vec!["loop"],
+                _async: false,
             }))],
         });
 
@@ -819,16 +861,19 @@ mod tests {
                 Node::Expression(Expr::Cmd(Cmd {
                     program: "echo",
                     args: vec!["$i"],
+                    _async: false,
                 })),
                 Node::Statement(Stmt::If {
                     cond: Expr::Cmd(Cmd {
                         program: "test",
                         args: vec!["$i", "=", "2"],
+                        _async: false,
                     })
                     .into(),
                     then: Node::Expression(Expr::Cmd(Cmd {
                         program: "break",
                         args: vec![],
+                        _async: false,
                     }))
                     .into(),
                     or_then: None,
@@ -859,14 +904,17 @@ mod tests {
             Node::Expression(Expr::Cmd(Cmd {
                 program: "echo",
                 args: vec!["outer"],
+                _async: false,
             })),
             Node::Statement(Stmt::Block(vec![Node::Expression(Expr::Cmd(Cmd {
                 program: "echo",
                 args: vec!["inner"],
+                _async: false,
             }))])),
             Node::Expression(Expr::Cmd(Cmd {
                 program: "echo",
                 args: vec!["after"],
+                _async: false,
             })),
         ]));
 
@@ -893,12 +941,14 @@ mod tests {
         let expected0 = Node::Expression(Expr::Cmd(Cmd {
             program: "echo",
             args: vec!["start"],
+            _async: false,
         }));
 
         let expected1 = Node::Statement(Stmt::If {
             cond: Expr::Cmd(Cmd {
                 program: "test",
                 args: vec!["true"],
+                _async: false,
             })
             .into(),
             then: Node::Statement(Stmt::Block(vec![
@@ -906,6 +956,7 @@ mod tests {
                     l: Expr::Cmd(Cmd {
                         program: "ls",
                         args: vec!["-l"],
+                        _async: false,
                     })
                     .into(),
                     r: Expr::RedirOutput {
@@ -913,6 +964,7 @@ mod tests {
                         op: Expr::Cmd(Cmd {
                             program: "grep",
                             args: vec![".txt"],
+                            _async: false,
                         })
                         .into(),
                         dest: "files.txt",
@@ -925,6 +977,7 @@ mod tests {
                     body: vec![Node::Expression(Expr::Cmd(Cmd {
                         program: "cat",
                         args: vec!["$f"],
+                        _async: false,
                     }))],
                 }),
             ]))
@@ -935,6 +988,7 @@ mod tests {
         let expected2 = Node::Expression(Expr::Cmd(Cmd {
             program: "echo",
             args: vec!["end"],
+            _async: false,
         }));
 
         assert_eq!(program[0], expected0);

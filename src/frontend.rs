@@ -5,7 +5,8 @@ use std::{
     fmt::Display,
     fs::{DirEntry, FileType},
     io::{Error, Stdout, Write},
-    os::unix::{ffi::OsStrExt, fs::FileTypeExt}, path::PathBuf,
+    os::unix::{ffi::OsStrExt, fs::FileTypeExt},
+    path::PathBuf,
 };
 use termion::{
     clear,
@@ -265,7 +266,7 @@ pub fn prompt(app: &mut AppState) -> Result<(), Error> {
 
     write!(
         app.term,
-        "\r{}\r{} {}{}{}{}{}{} {} {}",
+        "\r{}\r{} {}{}{}{}{}{} {} ",
         clear::CurrentLine,
         PromptBar,
         prefix,
@@ -275,17 +276,21 @@ pub fn prompt(app: &mut AppState) -> Result<(), Error> {
         style::Bold,
         tip,
         style::Reset,
-        cursor::Save,
+        //cursor::Save, not supported in macOS terminal
     )?;
 
     if let Some(branch) = &app.branch {
         write!(
             app.term,
-            "{}{}{}{}",
+            "{}{}{}{}{}",
             cursor::Right(w),
             cursor::Left(branch.len() as u16),
             branch,
-            cursor::Restore
+            //cursor::Restore not supported in macOS terminal
+            cursor::Left(w),
+            cursor::Right(
+                (prefix.chars().count() + parent.chars().count() + tip.chars().count() + 3) as u16
+            ),
         )?;
     }
 
@@ -417,7 +422,6 @@ pub fn get_dir_common_substring(dirs: &[DirEntry]) -> Option<String> {
 
     Some(common.to_string())
 }
-
 
 pub fn get_common_substring(entries: &[String]) -> Option<String> {
     let first = entries[0].as_ref();
