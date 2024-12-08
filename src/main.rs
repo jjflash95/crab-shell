@@ -16,10 +16,7 @@ use nav::*;
 use utils::*;
 
 use exec::{exec_program, WaitableProcess};
-use std::{
-    io::{stdin, Error, Stdin, Write as _},
-    sync::{Mutex, MutexGuard, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard},
-};
+use std::io::{stdin, Error, Stdin, Write as _};
 use termion::{
     clear, cursor,
     event::Key,
@@ -28,16 +25,13 @@ use termion::{
     terminal_size,
 };
 
-static APP_STATE: OnceLock<RwLock<AppState>> = OnceLock::new();
-
 #[allow(dead_code)]
-const APP_NAME: &str = "crab-shell";
+const APP_NAME: &str = "crab";
 const APP_NAME_SHORT: &str = "csh";
 
 fn main() -> Result<(), Error> {
     ctrlc::set_handler(move || {}).expect("Error setting Ctrl-C handler");
     let mut app = AppState::new()?;
-    APP_STATE.set(RwLock::new(AppState::new()?)).unwrap();
     let mut input = stdin().keys();
 
     prompt(&mut app)?;
@@ -65,7 +59,7 @@ fn main() -> Result<(), Error> {
 }
 
 fn exec_tree(tree: &[parser::Node], ctx: &mut AppState) -> Result<nix::unistd::Pid, Error> {
-    exec_program(tree, exec::StdChannels::default())
+    exec_program(tree, exec::StdChannels::default(), ctx)
 }
 
 fn handle_new_char(app: &mut AppState, c: char) -> Result<(), Error> {
@@ -307,12 +301,3 @@ fn handle_fuzzy_find(app: &mut AppState, keys: &mut Keys<Stdin>) -> Result<(), E
 
     Ok(())
 }
-
-pub fn app_state_mut() -> RwLockWriteGuard<'static, AppState> {
-    APP_STATE.get().unwrap().write().unwrap()
-}
-
-pub fn app_state() -> RwLockReadGuard<'static, AppState> {
-    APP_STATE.get().unwrap().read().unwrap()
-}
-
