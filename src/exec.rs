@@ -13,7 +13,6 @@ use nix::{
     },
     unistd::{dup, fork, ForkResult, Pid},
 };
-use termion::raw::IntoRawMode as _;
 
 use crate::{
     app::{AppState, Sourcer},
@@ -26,13 +25,11 @@ use crate::{
 pub const NOOP_PROGRAM: Cmd<'static> = Cmd {
     program: "true",
     args: vec![],
-    _async: false,
 };
 
 pub const BREAK_PROGRAM: Cmd<'static> = Cmd {
     program: "break",
     args: vec![],
-    _async: false,
 };
 
 pub struct StdChannels<I, O, E>(pub I, pub O, pub E);
@@ -181,7 +178,12 @@ where
         } => exec_if(cond, then, or_then.as_deref(), channels, ctx),
         For { var, items, body } => exec_for(var, items, body, channels, ctx),
         While { cond, body } => exec_while(cond, body, channels, ctx),
-        Block(nodes) => exec_block(nodes, channels, ctx),
+        Block { ops: nodes, _async } => {
+            if *_async {
+                return exec_block_forked(nodes, channels, ctx);
+            }
+            exec_block(nodes, channels, ctx)
+        }
     }
 }
 
@@ -289,6 +291,37 @@ where
     exec_noop(channels, ctx)
 }
 
+pub fn exec_block_forked<I, E, O>(
+    nodes: &[Node],
+    channels: StdChannels<I, E, O>,
+    ctx: &mut AppState,
+) -> Result<Pid, Error>
+where
+    I: Into<Stdio>,
+    O: Into<Stdio> + AsRawFd + Write,
+    E: Into<Stdio> + AsRawFd + Write,
+{
+    match unsafe { fork() }? {
+        ForkResult::Child => {
+            let StdChannels(_, out, err) = channels;
+            let mut outd = clone(&out).expect("failed to clone stdout");
+            let channels = StdChannels(Stdio::piped(), out, err);
+            write!(outd, "\r[{}]\r\n", std::process::id())?;
+            let _ = exec_program(nodes, channels, ctx).and_then(|pid| pid.wait_for(|_| true));
+            write!(outd, "\r[{}] + done {{ ", std::process::id())?;
+            for (i, node) in nodes.iter().enumerate() {
+                if i > 0 {
+                    write!(outd, ";\r\n")?;
+                }
+                write!(outd, "{}", node)?;
+            }
+            write!(outd, " }}\r\n")?;
+            std::process::exit(0);
+        }
+        ForkResult::Parent { .. } => exec_noop(channels, ctx),
+    }
+}
+
 pub fn exec_block<I, E, O>(
     nodes: &[Node],
     channels: StdChannels<I, E, O>,
@@ -315,8 +348,19 @@ where
     use Expr::*;
 
     match ast {
-        Cmd(cmd) => exec_cmd(cmd, channels, ctx),
-        Subshell(ss) => exec_subshell(ss, channels, ctx),
+        Cmd { op: cmd, _async } => {
+            if *_async {
+                return exec_cmd_forked(cmd, channels, ctx);
+            }
+            exec_cmd(cmd, channels, ctx)
+        }
+        Grouped { op, _async } => {
+            if *_async {
+                return exec_ast_forked(ast, channels, ctx);
+            };
+            exec_ast(op, channels, ctx)
+        }
+        Subshell { op: ss } => exec_subshell(ss, channels, ctx),
         Pipe { l, r } => exec_pipe(l, r, channels, ctx),
         And { l, r } => exec_and(l, r, channels, ctx),
         Or { l, r } => exec_or(l, r, channels, ctx),
@@ -462,6 +506,54 @@ where
     }
 }
 
+fn exec_ast_forked<I, O, E>(
+    ast: &Expr,
+    channels: StdChannels<I, O, E>,
+    ctx: &mut AppState,
+) -> Result<Pid, Error>
+where
+    I: Into<Stdio>,
+    O: Into<Stdio> + AsRawFd + Write,
+    E: Into<Stdio> + AsRawFd + Write,
+{
+    match unsafe { fork() }? {
+        ForkResult::Child => {
+            let StdChannels(_, out, err) = channels;
+            let mut outd = clone(&out).expect("failed to clone stdout");
+            let channels = StdChannels(Stdio::piped(), out, err);
+            print!("\r[{}]\r\n", std::process::id());
+            let _ = exec_ast(ast, channels, ctx).and_then(|pid| pid.wait_for(|_| true));
+            write!(outd, "\r[{}] + done {}\r\n", std::process::id(), ast)?;
+            std::process::exit(0);
+        }
+        ForkResult::Parent { .. } => exec_noop(channels, ctx),
+    }
+}
+
+fn exec_cmd_forked<I, O, E>(
+    cmd: &Cmd,
+    channels: StdChannels<I, O, E>,
+    ctx: &mut AppState,
+) -> Result<Pid, Error>
+where
+    I: Into<Stdio>,
+    O: Into<Stdio> + AsRawFd + Write,
+    E: Into<Stdio> + AsRawFd + Write,
+{
+    match unsafe { fork() }? {
+        ForkResult::Child => {
+            let StdChannels(_, out, err) = channels;
+            let mut outd = clone(&out).expect("failed to clone stdout");
+            let channels = StdChannels(Stdio::piped(), out, err);
+            print!("\r[{}]\r\n", std::process::id());
+            let _ = exec_cmd(cmd, channels, ctx).and_then(|pid| pid.wait_for(|_| true));
+            write!(outd, "\r[{}] + done {}\r\n", std::process::id(), cmd)?;
+            std::process::exit(0);
+        }
+        ForkResult::Parent { .. } => exec_noop(channels, ctx),
+    }
+}
+
 fn exec_cmd<I, O, E>(
     cmd: &Cmd,
     channels: StdChannels<I, O, E>,
@@ -518,10 +610,7 @@ where
             exec_noop(channels, ctx)
         }
         "exit" => std::process::exit(0),
-        program => match cmd._async {
-            false => exec_cmd_inner(program, &cmd.args, channels, ctx),
-            _ => exec_cmd_forked(program, &cmd.args, channels, ctx),
-        },
+        program => exec_cmd_inner(program, &cmd.args, channels, ctx),
     }
 }
 
@@ -565,57 +654,45 @@ where
     Ok(Pid::from_raw(child.id() as i32))
 }
 
-fn exec_cmd_forked<I, O, E>(
-    program: &str,
-    args: &[&str],
-    channels: StdChannels<I, O, E>,
-    ctx: &mut AppState,
-) -> Result<Pid, Error>
-where
-    I: Into<Stdio>,
-    O: Into<Stdio> + AsRawFd + Write,
-    E: Into<Stdio> + AsRawFd + Write,
-{
-    let (stdin, stdout, stderr) = channels.inner();
-
-    let args: Vec<_> = args
-        .iter()
-        .map(|s| utils::remove_escape_codes(s))
-        .map(|s| evaluate_arg(&s, ctx))
-        .flat_map(expand_wildcards)
-        .collect();
-
-    let mut child = Command::new(program)
-        .args(args.clone())
-        .stdin(stdin)
-        .stdout(stdout)
-        .stderr(stderr)
-        .spawn()
-        .add_ctx(program)?;
-
-    write!(io::stdout(), "[async] {}\r\n", child.id())?;
-    io::stdout().flush()?;
-    let program = program.to_string();
-    let t = std::thread::spawn(move || {
-        let out = io::stdout().into_raw_mode()?;
-        drop(out);
-        let ecode = child.wait().unwrap_or_default().code().unwrap_or(420);
-        write!(
-            io::stdout(),
-            "\r[async] {} => [{}] + done {program} {}\r\n",
-            child.id(),
-            ecode,
-            args.join(" "),
-        )?;
-        io::stdout().flush()?;
-        let out = io::stdout().into_raw_mode()?;
-        std::mem::forget(out);
-        Ok::<(), Error>(())
-    });
-    std::mem::forget(t);
-
-    exec_noop(StdChannels::default(), ctx)
-}
+//fn exec_cmd_forked<I, O, E>(
+//    program: &str,
+//    args: &[&str],
+//    channels: StdChannels<I, O, E>,
+//    ctx: &mut AppState,
+//) -> Result<Pid, Error>
+//where
+//    I: Into<Stdio>,
+//    O: Into<Stdio> + AsRawFd + Write,
+//    E: Into<Stdio> + AsRawFd + Write,
+//{
+//    let child = exec_cmd_inner(program, args, channels, ctx)?;
+//    write!(io::stdout(), "[async] {}\r\n", child)?;
+//    io::stdout().flush()?;
+//    let program = program.to_string();
+//    let args = args
+//        .to_owned()
+//        .into_iter()
+//        .map(ToOwned::to_owned)
+//        .collect::<Vec<_>>();
+//    let t = std::thread::spawn(move || {
+//        let out = io::stdout().into_raw_mode()?;
+//        drop(out);
+//        child.wait_for(|_| true)?;
+//        write!(
+//            io::stdout(),
+//            "\r[async] {} + done {program} {}\r\n",
+//            child,
+//            args.join(" "),
+//        )?;
+//        io::stdout().flush()?;
+//        let out = io::stdout().into_raw_mode()?;
+//        std::mem::forget(out);
+//        Ok::<(), Error>(())
+//    });
+//    std::mem::forget(t);
+//
+//    exec_noop(StdChannels::default(), ctx)
+//}
 
 fn evaluate_arg(arg: &str, ctx: &mut AppState) -> String {
     tokenize(arg)

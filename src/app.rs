@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fmt::Display,
+    fmt::{Debug, Display},
     fs::{self, File},
     io::{stdout, BufRead as _, BufReader, Error, Read, Write as _},
     path::{Path, PathBuf},
@@ -267,6 +267,12 @@ impl History {
         }
 
         PathBuf::default()
+    }
+}
+
+impl Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AppState")
     }
 }
 
