@@ -172,6 +172,11 @@ impl CharBuffer {
         )
     }
 
+    pub fn lines(&self) -> usize {
+        self.left.iter().filter(|c| **c == '\n').count()
+            + self.right.iter().filter(|c| **c == '\n').count()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.left.is_empty() && self.right.is_empty()
     }

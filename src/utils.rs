@@ -44,7 +44,9 @@ pub fn remove_escape_codes(s: &str) -> String {
     let mut peek = s.chars().peekable();
 
     while let Some(c) = peek.next() {
-        if c == '\\' && peek.peek().is_some() {
+        if c == '\\' && peek.peek().is_some_and(|c| *c == '\n') {
+            let _ = peek.next();
+        } else if c == '\\' && peek.peek().is_some() {
             out.push(peek.next().unwrap());
         } else {
             out.push(c)

@@ -16,7 +16,11 @@ use nav::*;
 use utils::*;
 
 use exec::{exec_program, WaitableProcess};
-use std::io::{stdin, Error, Stdin, Write as _};
+use std::{
+    io::{stdin, Error, Stdin, Write as _},
+    thread,
+    time::Duration,
+};
 use termion::{
     clear, cursor,
     event::Key,
@@ -39,20 +43,26 @@ fn main() -> Result<(), Error> {
     while let Some(Ok(key)) = input.next() {
         match key {
             Key::Char('\t') => handle_autocomplete(&mut app)?,
-            Key::Char('\n') => handle_exec(&mut app)?,
-            Key::Char(c) => handle_new_char(&mut app, c)?,
-            Key::Backspace => handle_backspace(&mut app)?,
-            Key::Up => handle_move_up(&mut app)?,
-            Key::Down => handle_move_down(&mut app)?,
-            Key::Left => handle_move_left(&mut app)?,
-            Key::ShiftRight => handle_move_shift_right(&mut app)?,
-            Key::ShiftLeft => handle_move_shift_left(&mut app)?,
-            Key::Right => handle_move_right(&mut app)?,
+            Key::Char('\n') if app.buf.left.last() != Some(&'\\') => {
+                handle_exec(&mut app)?;
+                // sleep a tiny amount to avoid messing out term output on quick commands that run
+                // on the background, otherwise prompt can get rendered in between
+                thread::sleep(Duration::from_millis(20));
+            }
+            Key::Char(c) => handle_new_char(&mut app, c),
+            Key::Backspace => handle_backspace(&mut app),
+            Key::Up => handle_move_up(&mut app),
+            Key::Down => handle_move_down(&mut app),
+            Key::Left => handle_move_left(&mut app),
+            Key::ShiftRight => handle_move_shift_right(&mut app),
+            Key::ShiftLeft => handle_move_shift_left(&mut app),
+            Key::Right => handle_move_right(&mut app),
             Key::Ctrl('F') => handle_fuzzy_find(&mut app, &mut input)?,
             Key::Ctrl('f') => handle_fuzzy_find(&mut app, &mut input)?,
-            Key::Ctrl('c') => handle_ctrlc(&mut app)?,
+            Key::Ctrl('c') => handle_ctrlc(&mut app),
             _ => {}
         }
+        prompt(&mut app)?;
     }
 
     Ok(())
@@ -62,78 +72,69 @@ fn exec_tree(tree: &[parser::Node], ctx: &mut AppState) -> Result<nix::unistd::P
     exec_program(tree, exec::StdChannels::default(), ctx)
 }
 
-fn handle_new_char(app: &mut AppState, c: char) -> Result<(), Error> {
+fn handle_new_char(app: &mut AppState, c: char) {
     app.buf.left.push(c);
-    prompt(app)
 }
 
-fn handle_backspace(app: &mut AppState) -> Result<(), Error> {
+fn handle_backspace(app: &mut AppState) {
     app.buf.left.pop();
-    prompt(app)
 }
 
-fn handle_move_up(app: &mut AppState) -> Result<(), Error> {
+fn handle_move_up(app: &mut AppState) {
     let Some(prev) = app.history.get_prev() else {
-        return Ok(());
+        return;
     };
     app.buf.left.clear();
     app.buf.right.clear();
     app.buf.left.extend(prev.chars());
-    prompt(app)
 }
 
-fn handle_move_down(app: &mut AppState) -> Result<(), Error> {
+fn handle_move_down(app: &mut AppState) {
     let Some(next) = app.history.get_next() else {
-        return Ok(());
+        return;
     };
     app.buf.left.clear();
     app.buf.right.clear();
     app.buf.left.extend(next.chars());
-    prompt(app)
 }
 
-fn handle_move_left(app: &mut AppState) -> Result<(), Error> {
+fn handle_move_left(app: &mut AppState) {
     app.buf.move_l2r();
-    prompt(app)
 }
 
-fn handle_move_right(app: &mut AppState) -> Result<(), Error> {
+fn handle_move_right(app: &mut AppState) {
     app.buf.move_r2l();
-    prompt(app)
 }
 
-fn handle_move_shift_left(app: &mut AppState) -> Result<(), Error> {
+fn handle_move_shift_left(app: &mut AppState) {
     while let Some(c) = app.buf.left.pop() {
         app.buf.right.push(c);
         if c == ' ' {
             break;
         }
     }
-    prompt(app)
 }
 
-fn handle_move_shift_right(app: &mut AppState) -> Result<(), Error> {
+fn handle_move_shift_right(app: &mut AppState) {
     while let Some(c) = app.buf.right.pop() {
         app.buf.left.push(c);
         if c == ' ' {
             break;
         }
     }
-    prompt(app)
 }
 
-fn handle_ctrlc(app: &mut AppState) -> Result<(), Error> {
+fn handle_ctrlc(app: &mut AppState) {
     app.buf.left.clear();
     app.buf.right.clear();
-    write!(&mut app.term, "{}", clear::AfterCursor)?;
-    prompt(app)
+    let _ = write!(&mut app.term, "{}", clear::AfterCursor);
 }
 
 fn handle_exec(app: &mut AppState) -> Result<(), Error> {
     write!(&mut app.term, "{}", clear::AfterCursor)?;
     if app.buf.is_empty() {
         write_and_flush(&mut app.term, &format!("{}\r❯\r\n", clear::CurrentLine))?;
-        return prompt(app);
+        return Ok(());
     }
 
     let text = app.buf.string_nc();
@@ -144,7 +145,7 @@ fn handle_exec(app: &mut AppState) -> Result<(), Error> {
 
     write_and_flush(
         &mut app.term,
-        &format!("{}\r❯ {}\r\n", clear::CurrentLine, &text.trim()),
+        &format!("{}\r❯ {}\r\n", clear::CurrentLine, &text.replace("\n", "\r\n").trim()),
     )?;
 
     app.term.suspend_raw_mode()?;
@@ -159,7 +160,7 @@ fn handle_exec(app: &mut AppState) -> Result<(), Error> {
 
     app.history.push(text);
     app.term.activate_raw_mode()?;
-    prompt(app)
+    Ok(())
 }
 
 fn handle_custom_suggestions(
@@ -291,6 +292,7 @@ fn handle_fuzzy_find(app: &mut AppState, keys: &mut Keys<Stdin>) -> Result<(), E
         display_cmd_history(&mut app.term, &sorted)?;
         write_and_flush(&mut app.term, &search)?;
     }
+
     write_and_flush(&mut app.term, &format!("{}", ToMainScreen))?;
     if let Some(new_buffer) = new_buffer {
         app.buf.left.clear();

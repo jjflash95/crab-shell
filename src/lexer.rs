@@ -71,7 +71,11 @@ impl<'a> Iterator for Tokenizer<'a> {
     type Item = Token<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.next_token()
+        let t = self.next_token();
+        if matches!(t, Some(Token::Word("\\\n"))) {
+            return self.next_token();
+        }
+        t
     }
 }
 
@@ -139,10 +143,16 @@ impl<'a> Tokenizer<'a> {
         };
         let mut iterable = self.lexer.as_iter();
         match iterable.peek().copied() {
-            Some((_, '$')) => {
+            Some((i, '$')) => {
                 let _ = iterable.next();
                 if let Some((_, '(')) = iterable.peek() {
                     self.take_subcmd().map(Word)
+                } else if let Some((_, '"')) = iterable.peek() {
+                    let _ = self.lexer.take_subslice(1 + i);
+                    self.lexer.quoted_str().map(QuotedStr)
+                } else if let Some((_, '\'')) = iterable.peek() {
+                    let _ = self.lexer.take_subslice(1 + i);
+                    self.lexer.quoted_str().map(QuotedStr)
                 } else {
                     Some(Word(self.take_var()))
                 }

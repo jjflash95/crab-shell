@@ -545,9 +545,11 @@ where
             let StdChannels(_, out, err) = channels;
             let mut outd = clone(&out).expect("failed to clone stdout");
             let channels = StdChannels(Stdio::piped(), out, err);
-            print!("\r[{}]\r\n", std::process::id());
+            ctx.term.suspend_raw_mode()?;
+            write!(outd, "\r[{}]\r\n", std::process::id())?;
             let _ = exec_cmd(cmd, channels, ctx).and_then(|pid| pid.wait_for(|_| true));
             write!(outd, "\r[{}] + done {}\r\n", std::process::id(), cmd)?;
+            ctx.term.activate_raw_mode()?;
             std::process::exit(0);
         }
         ForkResult::Parent { .. } => exec_noop(channels, ctx),
@@ -564,6 +566,12 @@ where
     O: Into<Stdio> + AsRawFd + Write,
     E: Into<Stdio> + AsRawFd + Write,
 {
+    // this is the least invasive way I found to clear the prompt cursor
+    // when executing commands in background so that the prompt does not step
+    // over the commands output
+    write!(ctx.term, "{}\r", termion::clear::CurrentLine)?;
+    let _ = ctx.term.flush();
+
     match cmd.program {
         "git" => {
             exec_cmd_inner(cmd.program, &cmd.args, channels.dup()?, ctx)?.wait_for(|c| c == 0)?;
@@ -653,46 +661,6 @@ where
 
     Ok(Pid::from_raw(child.id() as i32))
 }
-
-//fn exec_cmd_forked<I, O, E>(
-//    program: &str,
-//    args: &[&str],
-//    channels: StdChannels<I, O, E>,
-//    ctx: &mut AppState,
-//) -> Result<Pid, Error>
-//where
-//    I: Into<Stdio>,
-//    O: Into<Stdio> + AsRawFd + Write,
-//    E: Into<Stdio> + AsRawFd + Write,
-//{
-//    let child = exec_cmd_inner(program, args, channels, ctx)?;
-//    write!(io::stdout(), "[async] {}\r\n", child)?;
-//    io::stdout().flush()?;
-//    let program = program.to_string();
-//    let args = args
-//        .to_owned()
-//        .into_iter()
-//        .map(ToOwned::to_owned)
-//        .collect::<Vec<_>>();
-//    let t = std::thread::spawn(move || {
-//        let out = io::stdout().into_raw_mode()?;
-//        drop(out);
-//        child.wait_for(|_| true)?;
-//        write!(
-//            io::stdout(),
-//            "\r[async] {} + done {program} {}\r\n",
-//            child,
-//            args.join(" "),
-//        )?;
-//        io::stdout().flush()?;
-//        let out = io::stdout().into_raw_mode()?;
-//        std::mem::forget(out);
-//        Ok::<(), Error>(())
-//    });
-//    std::mem::forget(t);
-//
-//    exec_noop(StdChannels::default(), ctx)
-//}
 
 fn evaluate_arg(arg: &str, ctx: &mut AppState) -> String {
     tokenize(arg)

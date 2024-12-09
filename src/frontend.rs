@@ -6,7 +6,6 @@ use std::{
     fs::{DirEntry, FileType},
     io::{Error, Stdout, Write},
     os::unix::{ffi::OsStrExt, fs::FileTypeExt},
-    path::PathBuf,
 };
 use termion::{
     clear,
@@ -247,6 +246,7 @@ pub fn write_and_flush<T: Write, S: Display>(term: &mut T, s: S) -> Result<(), E
 }
 
 pub fn prompt(app: &mut AppState) -> Result<(), Error> {
+    const PROMPT_INPUT_PADDING: usize = 3;
     let (w, _) = terminal_size()?;
     let mut current_dir = std::env::current_dir()?
         .into_os_string()
@@ -289,12 +289,15 @@ pub fn prompt(app: &mut AppState) -> Result<(), Error> {
             //cursor::Restore not supported in macOS terminal
             cursor::Left(w),
             cursor::Right(
-                (prefix.chars().count() + parent.chars().count() + tip.chars().count() + 3) as u16
+                (prefix.chars().count()
+                    + parent.chars().count()
+                    + tip.chars().count()
+                    + PROMPT_INPUT_PADDING) as u16
             ),
         )?;
     }
 
-    write!(app.term, "{}", app.buf)?;
+    write!(app.term, "{}", app.buf.string_nc().replace("\n", "\r\n"))?;
     app.term.flush()?;
     Ok(())
 }

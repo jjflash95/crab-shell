@@ -470,7 +470,6 @@ pub fn cmd(mut source: TokenStream) -> ParseRes {
 
 pub fn generate_program<'a>(mut tokens: Peekable<Iter<'a, Token<'a>>>) -> Vec<Node<'a>> {
     let mut program = vec![];
-
     while let Ok((mut rest, n)) = node(tokens) {
         program.push(n);
         if let Some(Token::Semicolon) = rest.peek() {
