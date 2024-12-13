@@ -131,6 +131,7 @@ fn handle_ctrlc(app: &mut AppState) {
 }
 
 fn handle_exec(app: &mut AppState) -> Result<(), Error> {
+    let (w, _) = terminal_size()?;
     write!(&mut app.term, "{}", clear::AfterCursor)?;
     if app.buf.is_empty() {
         write_and_flush(&mut app.term, &format!("{}\r❯\r\n", clear::CurrentLine))?;
@@ -143,9 +144,17 @@ fn handle_exec(app: &mut AppState) -> Result<(), Error> {
     app.buf.right.clear();
     app.history.set_current(app.buf.string_nc());
 
+    for _ in 0..app.buf.scrollback(w.into(), None) {
+        write!(app.term, "\r{}{}", clear::CurrentLine, cursor::Up(1))?;
+    }
+
     write_and_flush(
         &mut app.term,
-        &format!("{}\r❯ {}\r\n", clear::CurrentLine, &text.replace("\n", "\r\n").trim()),
+        &format!(
+            "{}\r❯ {}\r\n",
+            clear::CurrentLine,
+            &text.replace("\n", "\r\n").trim()
+        ),
     )?;
 
     app.term.suspend_raw_mode()?;
@@ -155,7 +164,7 @@ fn handle_exec(app: &mut AppState) -> Result<(), Error> {
         Ok(pid) => {
             let _ = pid.wait_for_or_interrupt(|_| true);
         }
-        Err(e) => eprintln!("{APP_NAME_SHORT}: internal: {e}"),
+        Err(e) => eprintln!("{APP_NAME_SHORT}: {e}"),
     }
 
     app.history.push(text);

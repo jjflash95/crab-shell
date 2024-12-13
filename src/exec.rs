@@ -6,6 +6,7 @@ use std::{
 };
 
 use glob::glob;
+use itertools::Itertools as _;
 use nix::{
     sys::{
         signal::Signal,
@@ -593,6 +594,25 @@ where
         }
         "source" | "." => {
             source(&cmd.args, ctx)?;
+            exec_noop(channels, ctx)
+        }
+        "history" => {
+            if cmd.args.iter().any(|a| *a == "--save" || *a == "-s") {
+                ctx.history.save()?;
+            }
+            if cmd.args.iter().any(|a| *a == "--reload" || *a == "-r") {
+                ctx.history.reload()?;
+            }
+            if cmd.args.is_empty() {
+                write!(
+                    clone(&channels.1)?,
+                    "{}\r\n",
+                    ctx.history
+                        .src()
+                        .map(|p| p.as_os_str().to_str().unwrap_or_default())
+                        .unwrap_or_default()
+                )?;
+            }
             exec_noop(channels, ctx)
         }
         "colorscheme" => {

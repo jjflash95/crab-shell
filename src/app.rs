@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display},
     fs::{self, File},
-    io::{stdout, BufRead as _, BufReader, Error, Read, Write as _},
+    io::{stdout, BufRead as _, BufReader, Error, ErrorKind, Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -164,6 +164,7 @@ impl CharBuffer {
         None
     }
 
+    // formats both buffers into a single string without adjusting the cursor position
     pub fn string_nc(&self) -> String {
         format!(
             "{}{}",
@@ -172,13 +173,41 @@ impl CharBuffer {
         )
     }
 
-    pub fn lines(&self) -> usize {
-        self.left.iter().filter(|c| **c == '\n').count()
-            + self.right.iter().filter(|c| **c == '\n').count()
-    }
-
     pub fn is_empty(&self) -> bool {
         self.left.is_empty() && self.right.is_empty()
+    }
+
+    // returns the amount of lines the buffer occupies,
+    // this is the amount of newlines in the buffer + the amount of vertical spaces a line longer
+    // than the terminal width occupies
+    pub fn scrollback(&self, max_width: usize, prompt_len: Option<usize>) -> usize {
+        let mut lines = 0;
+        let mut width = 0;
+        for char in self.left.iter() {
+            width += 1;
+            if lines == 0 && prompt_len.unwrap_or_default() + width == max_width {
+                lines += 1;
+                width = 0;
+            }
+            if *char == '\n' || width == max_width {
+                lines += 1;
+                width = 0;
+            }
+        }
+        for char in self.right.iter().rev() {
+            width += 1;
+            if *char == '\n' || width == max_width {
+                lines += 1;
+                width = 0;
+            }
+        }
+
+        if (self.right.is_empty() && self.left.last().is_some_and(|c| *c == '\n'))
+            || (self.right.first().is_some_and(|c| *c == '\n'))
+        {
+            lines -= 1
+        }
+        lines
     }
 }
 
@@ -198,6 +227,10 @@ impl Display for CharBuffer {
 impl History {
     pub fn new() -> Self {
         Self::from_path(Self::get_default_path()).unwrap_or_default()
+    }
+
+    pub fn src(&self) -> Option<&Path> {
+        self.src.as_deref()
     }
 
     pub fn from_path<P: AsRef<Path> + Into<PathBuf>>(p: P) -> Result<Self, Error> {
@@ -265,6 +298,7 @@ impl History {
     }
 
     pub fn get_default_path() -> PathBuf {
+        #[allow(deprecated)]
         if let Some(home) = std::env::home_dir() {
             return home
                 .join(format!(".{}", crate::APP_NAME_SHORT))
@@ -273,23 +307,28 @@ impl History {
 
         PathBuf::default()
     }
+
+    pub fn save(&self) -> Result<(), Error> {
+        let Some(src) = &self.src else {
+            return Err(Error::new(ErrorKind::Other, "No source file"));
+        };
+        let mut file = fs::OpenOptions::new().append(true).open(src)?;
+        for cmd in self.buffer[self.save_from..].iter() {
+            file.write_all(format!("{}\n", cmd).as_bytes())?;
+        }
+        Ok(())
+    }
+
+    pub fn reload(&mut self) -> Result<(), Error> {
+        let mut new_hist = Self::from_path(Self::get_default_path())?;
+        std::mem::swap(self, &mut new_hist);
+        Ok(())
+    }
 }
 
 impl Debug for AppState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "AppState")
-    }
-}
-
-impl Drop for History {
-    fn drop(&mut self) {
-        let Some(src) = &self.src else { return };
-        let Ok(mut file) = fs::OpenOptions::new().append(true).open(src) else {
-            return;
-        };
-        for cmd in self.buffer[self.save_from..].iter() {
-            let _ = file.write_all(format!("{}\n", cmd).as_bytes());
-        }
     }
 }
 

@@ -264,6 +264,15 @@ pub fn prompt(app: &mut AppState) -> Result<(), Error> {
         .map(|(p, t)| (format!("{p}/"), t))
         .unwrap_or((String::new(), &current_dir));
 
+    let prompt_len = prefix.chars().count()
+        + parent.chars().count()
+        + tip.chars().count()
+        + PROMPT_INPUT_PADDING;
+
+    for _ in 0..app.buf.scrollback(w.into(), Some(prompt_len)) {
+        write!(app.term, "\r{}{}", clear::CurrentLine, cursor::Up(1))?;
+    }
+
     write!(
         app.term,
         "\r{}\r{} {}{}{}{}{}{} {} ",
@@ -276,7 +285,7 @@ pub fn prompt(app: &mut AppState) -> Result<(), Error> {
         style::Bold,
         tip,
         style::Reset,
-        //cursor::Save, not supported in macOS terminal
+        //cursor::Save, not supported in macOS default terminal.app
     )?;
 
     if let Some(branch) = &app.branch {
@@ -297,7 +306,7 @@ pub fn prompt(app: &mut AppState) -> Result<(), Error> {
         )?;
     }
 
-    write!(app.term, "{}", app.buf.string_nc().replace("\n", "\r\n"))?;
+    write!(app.term, "{}", app.buf.to_string().replace("\n", "\r\n"))?;
     app.term.flush()?;
     Ok(())
 }
