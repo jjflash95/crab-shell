@@ -616,15 +616,16 @@ where
             exec_noop(channels, ctx)
         }
         "colorscheme" => {
-            const DEFAULTS: &[&str] = &[
-                include_str!("../themes/blue.cs"),
-                include_str!("../themes/boke.cs"),
-            ];
-
             for arg in &cmd.args {
                 match *arg {
-                    "blue" => Sourcer::source_from_text(DEFAULTS[0], ctx),
-                    "boke" => Sourcer::source_from_text(DEFAULTS[0], ctx),
+                    "default" => {
+                        Sourcer::source_from_text(include_str!("../themes/default.cs"), ctx)
+                    }
+                    "blue" => Sourcer::source_from_text(include_str!("../themes/blue.cs"), ctx),
+                    "sunset" => Sourcer::source_from_text(include_str!("../themes/sunset.cs"), ctx),
+                    "green" => Sourcer::source_from_text(include_str!("../themes/sunset.cs"), ctx),
+                    "dark" => Sourcer::source_from_text(include_str!("../themes/dark.cs"), ctx),
+                    "boke" => Sourcer::source_from_text(include_str!("../themes/boke.cs"), ctx),
                     _ => source(&[arg], ctx)?,
                 }
             }

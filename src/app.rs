@@ -185,9 +185,10 @@ impl CharBuffer {
         let mut width = 0;
         for char in self.left.iter() {
             width += 1;
-            if lines == 0 && prompt_len.unwrap_or_default() + width == max_width {
+            if lines == 0 && prompt_len.unwrap_or_default() + width > max_width {
                 lines += 1;
                 width = 0;
+                continue;
             }
             if *char == '\n' || width == max_width {
                 lines += 1;
