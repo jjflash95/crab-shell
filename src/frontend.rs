@@ -1,4 +1,4 @@
-use crate::{app::AppState, MatchedString};
+use crate::{app::AppState, utils, MatchedString};
 use itertools::Itertools;
 use std::{
     cmp::{self, Ordering},
@@ -6,11 +6,12 @@ use std::{
     fs::{DirEntry, FileType},
     io::{Error, Stdout, Write},
     os::unix::{ffi::OsStrExt, fs::FileTypeExt},
+    str::CharIndices,
 };
 use termion::{
     clear,
     color::{Bg, Fg, Rgb},
-    cursor,
+    cursor::{self, DetectCursorPos},
     raw::RawTerminal,
     style, terminal_size,
 };
@@ -224,7 +225,6 @@ impl<'a> Display for MatchedString<'a> {
         let MatchedString(cmd, selected, (_, indices)) = &self;
         for (i, c) in cmd.chars().enumerate() {
             if *selected {
-                // write!(f, "{}", Bg(Rgb(50, 50, 50)))?;
                 write!(f, "{}", FuzzyFindEntry::color_bg())?;
             }
             if indices.contains(&i) {
@@ -239,19 +239,21 @@ impl<'a> Display for MatchedString<'a> {
         Ok(())
     }
 }
+
 pub fn write_and_flush<T: Write, S: Display>(term: &mut T, s: S) -> Result<(), Error> {
     write!(term, "{}", s)?;
     term.flush()?;
     Ok(())
 }
 
-pub fn prompt(app: &mut AppState) -> Result<(), Error> {
+pub fn prompt(app: &mut AppState) -> Result<usize, Error> {
     const PROMPT_INPUT_PADDING: usize = 3;
     let (w, _) = terminal_size()?;
     let mut current_dir = std::env::current_dir()?
         .into_os_string()
         .into_string()
         .unwrap_or_default();
+
     let home = std::env::var("HOME").ok().unwrap_or_default();
     let (prefix, current_dir) = if current_dir.starts_with(&home) {
         ("~", current_dir.split_off(home.len()))
@@ -269,13 +271,9 @@ pub fn prompt(app: &mut AppState) -> Result<(), Error> {
         + tip.chars().count()
         + PROMPT_INPUT_PADDING;
 
-    for _ in 0..app.buf.scrollback(w.into(), Some(prompt_len)) {
-        write!(app.term, "\r{}{}", clear::CurrentLine, cursor::Up(1))?;
-    }
-
     write!(
         app.term,
-        "\r{}\r{} {}{}{}{}{}{} {} ",
+        "\r{}\r{} {}{}{}{}{}{} {} {}",
         clear::CurrentLine,
         PromptBar,
         prefix,
@@ -285,33 +283,27 @@ pub fn prompt(app: &mut AppState) -> Result<(), Error> {
         style::Bold,
         tip,
         style::Reset,
-        //cursor::Save, not supported in macOS default terminal.app
+        utils::cursor::Save,
     )?;
 
     if let Some(branch) = &app.branch {
         write!(
             app.term,
-            "{}{}{}{}{}",
+            "{}{}{}{}",
             cursor::Right(w),
             cursor::Left(branch.len() as u16),
             branch,
-            //cursor::Restore not supported in macOS terminal
-            cursor::Left(w),
-            cursor::Right(
-                (prefix.chars().count()
-                    + parent.chars().count()
-                    + tip.chars().count()
-                    + PROMPT_INPUT_PADDING) as u16
-            ),
+            utils::cursor::Restore,
         )?;
     }
 
-    write!(app.term, "{}", app.buf.to_string().replace("\n", "\r\n"))?;
-    app.term.flush()?;
-    Ok(())
+    Ok(prompt_len)
 }
 
-pub fn display_cmd_history<S: Display>(term: &mut RawTerm, cmds: &[S]) -> Result<(), Error> {
+pub fn display_cmd_history<S: Display + CharIndicesHelper>(
+    term: &mut RawTerm,
+    cmds: &[S],
+) -> Result<(), Error> {
     let (w, h) = terminal_size()?;
     write!(term, "{}", clear::All)?;
     let cmds = if cmds.len() >= h as usize {
@@ -321,12 +313,17 @@ pub fn display_cmd_history<S: Display>(term: &mut RawTerm, cmds: &[S]) -> Result
     };
 
     for (i, cmd) in cmds.iter().rev().enumerate() {
+        let (trunc, trailing) = match cmd.to_char_indices().nth(w as usize - 20) {
+            None => (cmd.to_string(), ""),
+            Some((idx, _)) => (cmd.to_string()[..idx].to_string(), "..."), // xd
+        };
         write!(
             term,
-            "{}{}{}",
+            "{}{}{}{}",
             style::Reset,
             cursor::Goto(3, h - i as u16 - 1),
-            cmd
+            trunc,
+            trailing,
         )?;
     }
     write!(
@@ -457,6 +454,28 @@ fn common_prefix<'a>(a: &'a str, b: &'a str) -> &'a str {
     }
 
     &a[0..end]
+}
+
+pub trait CharIndicesHelper {
+    fn to_char_indices(&self) -> CharIndices<'_>;
+}
+
+impl CharIndicesHelper for &'_ str {
+    fn to_char_indices(&self) -> CharIndices<'_> {
+        self.char_indices()
+    }
+}
+
+impl CharIndicesHelper for String {
+    fn to_char_indices(&self) -> CharIndices<'_> {
+        self.char_indices()
+    }
+}
+
+impl CharIndicesHelper for MatchedString<'_> {
+    fn to_char_indices(&self) -> CharIndices<'_> {
+        self.0.char_indices()
+    }
 }
 
 pub mod gradient {

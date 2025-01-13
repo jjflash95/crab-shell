@@ -177,9 +177,9 @@ impl CharBuffer {
         self.left.is_empty() && self.right.is_empty()
     }
 
-    // returns the amount of lines the buffer occupies,
+    // returns the amount of vertical space the buffer occupies,
     // this is the amount of newlines in the buffer + the amount of vertical spaces a line longer
-    // than the terminal width occupies
+    // than the terminal width
     pub fn scrollback(&self, max_width: usize, prompt_len: Option<usize>) -> usize {
         let mut lines = 0;
         let mut width = 0;
@@ -203,11 +203,6 @@ impl CharBuffer {
             }
         }
 
-        if (self.right.is_empty() && self.left.last().is_some_and(|c| *c == '\n'))
-            || (self.right.first().is_some_and(|c| *c == '\n'))
-        {
-            lines -= 1
-        }
         lines
     }
 }
@@ -288,6 +283,10 @@ impl History {
     pub fn push(&mut self, entry: String) {
         self.index.take();
         self.buffer.push(entry)
+    }
+
+    pub fn reset_index(&mut self) {
+        self.index.take();
     }
 
     pub fn set_current(&mut self, current: String) {

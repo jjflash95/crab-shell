@@ -22,7 +22,8 @@ use std::{
     time::Duration,
 };
 use termion::{
-    clear, cursor,
+    clear,
+    cursor::{self, DetectCursorPos},
     event::Key,
     input::{Keys, TermRead},
     screen::{ToAlternateScreen, ToMainScreen},
@@ -38,18 +39,48 @@ fn main() -> Result<(), Error> {
     let mut app = AppState::new()?;
     let mut input = stdin().keys();
 
-    prompt(&mut app)?;
+    let mut prompt_len = prompt(&mut app)?;
+
+    let (mut x, mut y) = app.term.cursor_pos()?;
 
     while let Some(Ok(key)) = input.next() {
         match key {
-            Key::Char('\t') => handle_autocomplete(&mut app)?,
+            Key::Char('\t') => {
+                handle_autocomplete(&mut app)?;
+                continue;
+            }
             Key::Char('\n') if app.buf.left.last() != Some(&'\\') => {
+                app.history.reset_index();
+                reset_cursor_and_clear(&mut app, x, y)?;
                 handle_exec(&mut app)?;
                 // sleep a tiny amount to avoid messing out term output on quick commands that run
                 // on the background, otherwise prompt can get rendered in between
                 thread::sleep(Duration::from_millis(20));
+                prompt_len = prompt(&mut app)?;
+                (x, y) = app.term.cursor_pos()?;
+                (curr_x, curr_y) = (x, y);
             }
-            Key::Char(c) => handle_new_char(&mut app, c),
+            Key::Char(c) => {
+                handle_new_char(&mut app, c)?;
+                reset_cursor_and_clear(&mut app, x, y)?;
+                display_bufs(&mut app, x, y)?;
+                let (max_x, max_y) = terminal_size()?;
+
+                if curr_y == max_y {
+                    if c == '\n' {
+                        y -= 1;
+                    } else {
+                        let second_last =
+                            app.buf.left.len().checked_sub(2).map(|i| app.buf.left[i]);
+                        let (tail_chars, total_lines) = get_buffer_shape(max_x, &app, prompt_len);
+                        if tail_chars == 1 && total_lines > 1 && second_last != Some('\n') {
+                            y -= 1
+                        }
+                    }
+                }
+
+                continue;
+            }
             Key::Backspace => handle_backspace(&mut app),
             Key::Up => handle_move_up(&mut app),
             Key::Down => handle_move_down(&mut app),
@@ -59,21 +90,83 @@ fn main() -> Result<(), Error> {
             Key::Right => handle_move_right(&mut app),
             Key::Ctrl('F') => handle_fuzzy_find(&mut app, &mut input)?,
             Key::Ctrl('f') => handle_fuzzy_find(&mut app, &mut input)?,
-            Key::Ctrl('c') => handle_ctrlc(&mut app),
+            Key::Ctrl('c') => {
+                handle_ctrlc(&mut app, 1, y)?;
+                prompt(&mut app)?;
+                (x, y) = app.term.cursor_pos()?;
+                (curr_x, curr_y) = (x, y);
+            }
             _ => {}
         }
-        prompt(&mut app)?;
+        display_bufs(&mut app, x, y)?;
     }
 
     Ok(())
+}
+
+// returns how many characters are un the buffers tail (last line) and how many lines there are
+// this is used to handle the cursor's height in the terminal
+fn get_buffer_shape(max_x: u16, app: &AppState, prompt_len: usize) -> (usize, usize) {
+    let mut total_lines = 1;
+    let mut total_chars = 0;
+    for c in app.buf.left.iter() {
+        let max_line_len = if total_lines == 1 {
+            max_x as usize - prompt_len
+        } else {
+            max_x as usize
+        };
+        if *c == '\n' {
+            total_chars = 0;
+            total_lines += 1;
+        } else {
+            total_chars += 1;
+            if total_chars == max_line_len {
+                total_chars = 0;
+                total_lines += 1;
+            }
+        }
+    }
+
+    (total_chars, total_lines)
+}
+
+fn reset_cursor_and_clear(app: &mut AppState, x: u16, y: u16) -> Result<(), Error> {
+    write!(app.term, "{}{}", cursor::Goto(x, y), clear::AfterCursor)
+}
+
+fn display_bufs(app: &mut AppState, start_x: u16, start_y: u16) -> Result<(), Error> {
+    write!(
+        app.term,
+        "{}{}",
+        cursor::Goto(start_x, start_y),
+        clear::AfterCursor
+    )?;
+    for c in app.buf.left.iter() {
+        if *c == '\n' {
+            write!(app.term, "\r")?;
+        }
+        write!(app.term, "{}", c)?;
+    }
+
+    write!(app.term, "{}", utils::cursor::Save)?;
+    for c in app.buf.right.iter().rev() {
+        if *c == '\n' {
+            write!(app.term, "\r")?;
+        }
+        write!(app.term, "{}", c)?;
+    }
+
+    write!(app.term, "{}", utils::cursor::Restore)?;
+    app.term.flush()
 }
 
 fn exec_tree(tree: &[parser::Node], ctx: &mut AppState) -> Result<nix::unistd::Pid, Error> {
     exec_program(tree, exec::StdChannels::default(), ctx)
 }
 
-fn handle_new_char(app: &mut AppState, c: char) {
+fn handle_new_char(app: &mut AppState, c: char) -> Result<(), Error> {
     app.buf.left.push(c);
+    Ok(())
 }
 
 fn handle_backspace(app: &mut AppState) {
@@ -124,15 +217,15 @@ fn handle_move_shift_right(app: &mut AppState) {
     }
 }
 
-fn handle_ctrlc(app: &mut AppState) {
+fn handle_ctrlc(app: &mut AppState, x: u16, y: u16) -> Result<(), Error> {
     app.buf.left.clear();
     app.buf.right.clear();
-    let _ = write!(&mut app.term, "{}", clear::AfterCursor);
+    reset_cursor_and_clear(app, x, y)?;
+    app.term.flush()?;
+    Ok(())
 }
 
 fn handle_exec(app: &mut AppState) -> Result<(), Error> {
-    let (w, _) = terminal_size()?;
-    write!(&mut app.term, "{}", clear::AfterCursor)?;
     if app.buf.is_empty() {
         write_and_flush(&mut app.term, &format!("{}\r❯\r\n", clear::CurrentLine))?;
         return Ok(());
@@ -143,11 +236,6 @@ fn handle_exec(app: &mut AppState) -> Result<(), Error> {
     app.buf.left.clear();
     app.buf.right.clear();
     app.history.set_current(app.buf.string_nc());
-
-    for _ in 0..app.buf.scrollback(w.into(), None) {
-        write!(app.term, "\r{}{}", clear::CurrentLine, cursor::Up(1))?;
-    }
-
     write_and_flush(
         &mut app.term,
         &format!(

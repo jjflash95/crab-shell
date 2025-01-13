@@ -1,4 +1,4 @@
-use std::cmp;
+use std::{cmp, ops::{Index, Range}};
 
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher as _};
 use itertools::Itertools as _;
@@ -115,5 +115,31 @@ impl<'a> Eq for MatchedString<'a> {}
 impl<'a> PartialOrd for MatchedString<'a> {
     fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+impl<'a> Index<Range<usize>> for MatchedString<'a> {
+    type Output = str;
+
+    fn index(&self, range: Range<usize>) -> &Self::Output {
+        &self.0[range]
+    }
+}
+
+pub mod cursor {
+    use std::fmt::Display;
+
+    pub struct Save;
+    pub struct Restore;
+
+    impl Display for Save {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "\x1B7")
+        }
+    }
+    impl Display for Restore {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "\x1B8")
+        }
     }
 }
