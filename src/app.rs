@@ -23,6 +23,10 @@ pub struct AppState {
     pub history: History,
     pub branch: Option<String>,
     pub locals: HashMap<String, String>,
+
+    // Suggestions is a vector of already formatted and styled strings, including color, spacing
+    // and boldness, each string is displayed in its own line
+    suggestions: Option<Vec<String>>,
     breaker: Option<bool>,
 }
 
@@ -51,6 +55,7 @@ impl AppState {
             history: History::new(),
             branch: git::get_current_branch(),
             locals: HashMap::new(),
+            suggestions: None,
             breaker: None,
         };
         Sourcer::source_default_path(&mut this);
@@ -66,6 +71,18 @@ impl AppState {
             .get(key)
             .map(ToOwned::to_owned)
             .or_else(|| std::env::var(key).ok())
+    }
+
+    pub fn set_suggestions(&mut self, suggestions: Vec<String>) {
+        self.suggestions = Some(suggestions)
+    }
+
+    pub fn clear_suggestions(&mut self) {
+        self.suggestions = None
+    }
+
+    pub fn suggestions(&self) -> Option<&[String]> {
+        self.suggestions.as_ref().map(|s| s.as_ref())
     }
 
     pub fn enable_breaker(&mut self) {

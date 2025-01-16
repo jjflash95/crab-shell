@@ -23,7 +23,6 @@ use std::{
 };
 use termion::{
     clear,
-    cursor::{self, DetectCursorPos},
     event::Key,
     input::{Keys, TermRead},
     screen::{ToAlternateScreen, ToMainScreen},
@@ -34,130 +33,84 @@ use termion::{
 const APP_NAME: &str = "crab";
 const APP_NAME_SHORT: &str = "csh";
 
+
+
 fn main() -> Result<(), Error> {
     ctrlc::set_handler(move || {}).expect("Error setting Ctrl-C handler");
     let mut app = AppState::new()?;
     let mut input = stdin().keys();
-
-    let mut prompt_len = prompt(&mut app)?;
-
-    let (mut x, mut y) = app.term.cursor_pos()?;
+    let mut viewport = Viewport::new(&mut app)?;
+    viewport.display(&mut app)?;
 
     while let Some(Ok(key)) = input.next() {
         match key {
             Key::Char('\t') => {
                 handle_autocomplete(&mut app)?;
+                viewport.display(&mut app)?;
                 continue;
             }
             Key::Char('\n') if app.buf.left.last() != Some(&'\\') => {
                 app.history.reset_index();
-                reset_cursor_and_clear(&mut app, x, y)?;
                 handle_exec(&mut app)?;
                 // sleep a tiny amount to avoid messing out term output on quick commands that run
                 // on the background, otherwise prompt can get rendered in between
                 thread::sleep(Duration::from_millis(20));
-                prompt_len = prompt(&mut app)?;
-                (x, y) = app.term.cursor_pos()?;
-                (curr_x, curr_y) = (x, y);
+                app.clear_suggestions();
+                viewport.reload_pos(&mut app)?;
+                viewport.display(&mut app)?;
             }
             Key::Char(c) => {
                 handle_new_char(&mut app, c)?;
-                reset_cursor_and_clear(&mut app, x, y)?;
-                display_bufs(&mut app, x, y)?;
-                let (max_x, max_y) = terminal_size()?;
-
-                if curr_y == max_y {
-                    if c == '\n' {
-                        y -= 1;
-                    } else {
-                        let second_last =
-                            app.buf.left.len().checked_sub(2).map(|i| app.buf.left[i]);
-                        let (tail_chars, total_lines) = get_buffer_shape(max_x, &app, prompt_len);
-                        if tail_chars == 1 && total_lines > 1 && second_last != Some('\n') {
-                            y -= 1
-                        }
-                    }
-                }
-
-                continue;
+                viewport.display(&mut app)?;
             }
-            Key::Backspace => handle_backspace(&mut app),
-            Key::Up => handle_move_up(&mut app),
-            Key::Down => handle_move_down(&mut app),
-            Key::Left => handle_move_left(&mut app),
-            Key::ShiftRight => handle_move_shift_right(&mut app),
-            Key::ShiftLeft => handle_move_shift_left(&mut app),
-            Key::Right => handle_move_right(&mut app),
-            Key::Ctrl('F') => handle_fuzzy_find(&mut app, &mut input)?,
-            Key::Ctrl('f') => handle_fuzzy_find(&mut app, &mut input)?,
+            Key::Backspace => {
+                handle_backspace(&mut app);
+                viewport.display(&mut app)?;
+            }
+            Key::Up => {
+                handle_move_up(&mut app);
+                viewport.display(&mut app)?;
+            }
+            Key::Down => {
+                handle_move_down(&mut app);
+                viewport.display(&mut app)?;
+            }
+            Key::Left => {
+                handle_move_left(&mut app);
+                viewport.display(&mut app)?;
+            }
+            Key::Right => {
+                handle_move_right(&mut app);
+                viewport.display(&mut app)?;
+            }
+            Key::ShiftRight => {
+                handle_move_shift_right(&mut app);
+                viewport.display(&mut app)?;
+            }
+            Key::ShiftLeft => {
+                handle_move_shift_left(&mut app);
+                viewport.display(&mut app)?;
+            }
+
+            Key::Ctrl('F') => {
+                handle_fuzzy_find(&mut app, &mut input)?;
+                viewport.display(&mut app)?;
+            }
+            Key::Ctrl('f') => {
+                handle_fuzzy_find(&mut app, &mut input)?;
+                viewport.display(&mut app)?;
+            }
             Key::Ctrl('c') => {
-                handle_ctrlc(&mut app, 1, y)?;
-                prompt(&mut app)?;
-                (x, y) = app.term.cursor_pos()?;
-                (curr_x, curr_y) = (x, y);
+                handle_ctrlc(&mut app)?;
+                app.clear_suggestions();
+                viewport.clear(&mut app)?;
+                viewport.display(&mut app)?;
             }
             _ => {}
         }
-        display_bufs(&mut app, x, y)?;
     }
 
     Ok(())
-}
-
-// returns how many characters are un the buffers tail (last line) and how many lines there are
-// this is used to handle the cursor's height in the terminal
-fn get_buffer_shape(max_x: u16, app: &AppState, prompt_len: usize) -> (usize, usize) {
-    let mut total_lines = 1;
-    let mut total_chars = 0;
-    for c in app.buf.left.iter() {
-        let max_line_len = if total_lines == 1 {
-            max_x as usize - prompt_len
-        } else {
-            max_x as usize
-        };
-        if *c == '\n' {
-            total_chars = 0;
-            total_lines += 1;
-        } else {
-            total_chars += 1;
-            if total_chars == max_line_len {
-                total_chars = 0;
-                total_lines += 1;
-            }
-        }
-    }
-
-    (total_chars, total_lines)
-}
-
-fn reset_cursor_and_clear(app: &mut AppState, x: u16, y: u16) -> Result<(), Error> {
-    write!(app.term, "{}{}", cursor::Goto(x, y), clear::AfterCursor)
-}
-
-fn display_bufs(app: &mut AppState, start_x: u16, start_y: u16) -> Result<(), Error> {
-    write!(
-        app.term,
-        "{}{}",
-        cursor::Goto(start_x, start_y),
-        clear::AfterCursor
-    )?;
-    for c in app.buf.left.iter() {
-        if *c == '\n' {
-            write!(app.term, "\r")?;
-        }
-        write!(app.term, "{}", c)?;
-    }
-
-    write!(app.term, "{}", utils::cursor::Save)?;
-    for c in app.buf.right.iter().rev() {
-        if *c == '\n' {
-            write!(app.term, "\r")?;
-        }
-        write!(app.term, "{}", c)?;
-    }
-
-    write!(app.term, "{}", utils::cursor::Restore)?;
-    app.term.flush()
 }
 
 fn exec_tree(tree: &[parser::Node], ctx: &mut AppState) -> Result<nix::unistd::Pid, Error> {
@@ -217,10 +170,10 @@ fn handle_move_shift_right(app: &mut AppState) {
     }
 }
 
-fn handle_ctrlc(app: &mut AppState, x: u16, y: u16) -> Result<(), Error> {
+fn handle_ctrlc(app: &mut AppState) -> Result<(), Error> {
     app.buf.left.clear();
     app.buf.right.clear();
-    reset_cursor_and_clear(app, x, y)?;
+    //reset_cursor_and_clear(app, x, y)?;
     app.term.flush()?;
     Ok(())
 }
@@ -274,34 +227,28 @@ fn handle_custom_suggestions(
             let completion = &suggestions[0];
             let current = cmd_from_parts(leading, cmd, completion);
             app.buf.left = current.chars().collect();
-            write!(app.term, "\r{}", clear::AfterCursor)?;
-            prompt(app)?;
+            app.clear_suggestions();
         }
         _ => {
             if let Some(common) = get_common_substring(&suggestions) {
                 let current = cmd_from_parts(leading, cmd, &common);
                 app.buf.left = current.chars().collect();
             }
-            write!(app.term, "\r{}\n", clear::AfterCursor)?;
-            write!(app.term, "{}", suggestions.join("\n"))?;
-            write!(app.term, "{}", cursor::Up(suggestions.len() as u16))?;
-            prompt(app)?;
+            app.set_suggestions(suggestions);
         }
     }
-
-    app.term.activate_raw_mode()
+    Ok(())
 }
 
 fn handle_autocomplete(app: &mut AppState) -> Result<(), Error> {
-    app.term.suspend_raw_mode()?;
     let current = app.buf.left.iter().collect::<String>();
     let (start, rest) = split_last_unescaped(&current, utils::is_control_flow);
     let (cmd, tip) = split_last_unescaped(rest, utils::is_whitespace);
-    let tip = expand_home_symbol(tip.trim_start());
-    let tip = remove_escape_codes(&tip);
+    let tip = remove_escape_codes(&expand_home_symbol(tip.trim_start()));
 
     if let Some(suggestions) = autocomp::suggest_autocomp(rest) {
-        return handle_custom_suggestions(app, start, cmd, &tip, suggestions);
+        handle_custom_suggestions(app, start, cmd, &tip, suggestions)?;
+        return Ok(());
     }
 
     let Some(dirs) = Navigator::list_or_parent(&tip) else {
@@ -325,8 +272,7 @@ fn handle_autocomplete(app: &mut AppState) -> Result<(), Error> {
             );
             app.buf.left = current.chars().collect();
             app.history.set_current(current);
-            write!(app.term, "\r{}", clear::AfterCursor)?;
-            prompt(app)?;
+            app.clear_suggestions();
         }
         _ => {
             if let Some(common) = get_dir_common_substring(targets.as_slice()) {
@@ -334,14 +280,11 @@ fn handle_autocomplete(app: &mut AppState) -> Result<(), Error> {
                 app.buf.left = current.chars().collect();
             }
             let fmt_dirs = get_formatted_dirs(targets.as_slice(), terminal_size()?.0, None);
-            let lines = fmt_dirs.len() as u16;
-            write!(app.term, "\r{}\n", clear::AfterCursor)?;
-            write!(app.term, "{}", fmt_dirs.join("\n"))?;
-            write!(app.term, "{}", cursor::Up(lines as u16))?;
-            prompt(app)?;
+            app.set_suggestions(fmt_dirs);
         }
-    }
-    app.term.activate_raw_mode()
+    };
+
+    Ok(())
 }
 
 fn handle_fuzzy_find(app: &mut AppState, keys: &mut Keys<Stdin>) -> Result<(), Error> {
@@ -395,7 +338,6 @@ fn handle_fuzzy_find(app: &mut AppState, keys: &mut Keys<Stdin>) -> Result<(), E
         app.buf.left.clear();
         app.buf.right.clear();
         app.buf.left = new_buffer.chars().collect();
-        prompt(app)?;
     }
 
     Ok(())

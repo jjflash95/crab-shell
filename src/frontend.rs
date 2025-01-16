@@ -27,6 +27,11 @@ pub const INTENSE_BLACK: Rgb = Rgb(20, 20, 20);
 
 pub type RawTerm = RawTerminal<Stdout>;
 
+pub struct Viewport {
+    pos: (u16, u16),
+    max: (u16, u16),
+}
+
 #[derive(Debug)]
 struct PromptBar;
 
@@ -481,6 +486,7 @@ impl CharIndicesHelper for MatchedString<'_> {
 pub mod gradient {
     use super::*;
 
+    #[allow(dead_code)]
     pub fn print(
         line: &str,
         Rgb(sr, sg, sb): Rgb,
@@ -502,6 +508,7 @@ pub mod gradient {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn interpolate(start: (u8, u8, u8), end: (u8, u8, u8), t: f32) -> (u8, u8, u8) {
         (
             lerp(start.0, end.0, t),
@@ -512,5 +519,153 @@ pub mod gradient {
 
     fn lerp(start: u8, end: u8, t: f32) -> u8 {
         (start as f32 + (end as f32 - start as f32) * t) as u8
+    }
+}
+
+impl Viewport {
+    pub fn new(app: &mut AppState) -> Result<Self, Error> {
+        let max = terminal_size()?;
+        app.term.cursor_pos().map(|pos| Self { pos, max })
+    }
+
+    // returns how many characters are un the buffers tail (last line) and how many lines there are
+    // this is used to handle the cursor's height in the terminal
+    fn get_buffer_shape(&self, app: &AppState, prompt_len: usize) -> (usize, usize) {
+        let max_x = self.max.0;
+        let mut total_lines = 1;
+        let mut total_chars = 0;
+        for c in app.buf.left.iter() {
+            let max_line_len = if total_lines == 1 {
+                max_x as usize - prompt_len
+            } else {
+                max_x as usize
+            };
+            if *c == '\n' {
+                total_chars = 0;
+                total_lines += 1;
+            } else {
+                total_chars += 1;
+                if total_chars == max_line_len {
+                    total_chars = 0;
+                    total_lines += 1;
+                }
+            }
+        }
+
+        (total_chars, total_lines)
+    }
+
+    pub fn display(&mut self, app: &mut AppState) -> Result<(), Error> {
+        // keeping track of the cursor is kind of tricky because the emulator's escape codes for
+        // save and restore cursor do not change when the text scrolls, so we need to manually
+        // adjust the start position based on our buffer's shape and where we are on the screen,
+        // for example scrolling up if we are overflowing the bottom of the screen
+        //
+        // Steps to render the screen:
+        // - Goto the start position of the current viewport
+        // - Display the left buffer character by character, then Display the right buffer in
+        // reverse order character by character
+        // - Display the suggestions line by line if any
+        // - Adjust the cursor up if needed by the difference of lines between the current row and
+        // the max row
+        // - Adjust the cursor up if needed by the amount of suggestion lines
+        // - Display the left buffer character by character again (this is to render the text
+        // blinking block cursor in the correct position)
+
+        let (pos_x, pos_y) = self.pos;
+        let (_, max_y) = self.max;
+
+        let start = cursor::Goto(pos_x, pos_y);
+        write!(app.term, "{}{}", start, termion::clear::AfterCursor)?;
+        let plen = prompt(app)?;
+        let shape = self.get_buffer_shape(app, plen);
+        let (w, h) = shape;
+        let h_minus = (h - 1) as u16;
+
+        for char in app.buf.left.iter() {
+            if *char == '\n' {
+                write!(app.term, "\r\n{}", termion::clear::UntilNewline)?;
+            } else {
+                write!(app.term, "{}", char)?;
+            }
+        }
+
+        for char in app.buf.right.iter().rev() {
+            if *char == '\n' {
+                write!(app.term, "\r\n")?;
+            } else {
+                write!(app.term, "{}", char)?;
+            }
+        }
+
+        // clear any trailing characters from the previous buffer
+        if h > 1 {
+            write!(app.term, "{}", termion::clear::UntilNewline)?;
+        }
+
+        // the buffer height is bigger than the space between our current row and the max row
+        // and the last character was a newline char
+        if (max_y - pos_y) < h_minus && app.buf.left.last() == Some(&'\n') {
+            self.pos.1 = pos_y.saturating_sub(h_minus - (max_y - pos_y));
+        }
+
+        // the buffer height is bigger than the space betwenn our current row and the max row
+        // and the user just typed a the first character of the next line
+        if (max_y - pos_y) < h_minus && w > 1 {
+            self.pos.1 = pos_y.saturating_sub(h_minus - (max_y - pos_y));
+        }
+
+        // render the styled command suggestions and after that adjust the cursor again to the
+        // correct position and clear the rest of the screen
+        if let Some(suggestions) = app.suggestions() {
+            let suggestions = suggestions.to_owned();
+            match suggestions.len() {
+                0 => {}
+                _ => {
+                    for suggestion in suggestions.iter() {
+                        write!(
+                            app.term,
+                            "\r\n{}{}",
+                            termion::clear::UntilNewline,
+                            suggestion
+                        )?;
+                    }
+
+                    let total_height = suggestions.len() as u16 + h_minus;
+                    if (max_y - pos_y) < total_height {
+                        self.pos.1 -= suggestions.len() as u16;
+                    }
+                    write!(app.term, "{}", termion::clear::AfterCursor)?;
+                }
+            }
+        }
+
+        let (pos_x, pos_y) = self.pos;
+        let start = cursor::Goto(pos_x + plen as u16, pos_y);
+
+        write!(app.term, "{}", start)?;
+
+        for char in app.buf.left.iter() {
+            if *char == '\n' {
+                write!(app.term, "\r\n")?;
+            } else {
+                write!(app.term, "{}", char)?;
+            }
+        }
+
+        app.term.flush()
+    }
+
+    pub fn clear(&self, app: &mut AppState) -> Result<(), Error> {
+        let (pos_x, pos_y) = self.pos;
+        let start = cursor::Goto(pos_x, pos_y);
+
+        write!(app.term, "{}{}", start, termion::clear::AfterCursor)?;
+        app.term.flush()
+    }
+
+    pub fn reload_pos(&mut self, app: &mut AppState) -> Result<(), Error> {
+        self.pos = app.term.cursor_pos()?;
+        Ok(())
     }
 }
