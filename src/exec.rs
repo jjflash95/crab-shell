@@ -1,12 +1,11 @@
 use std::{
     fs::{File, OpenOptions},
-    io::{self, stderr, stdout, Error, ErrorKind, Read as _, Stderr, Stdout, Write},
+    io::{self, stderr, Error, ErrorKind, Read as _, Stderr, Stdout, Write},
     os::fd::{AsRawFd, FromRawFd as _},
     process::{Command, Stdio},
 };
 
 use glob::glob;
-use itertools::Itertools as _;
 use nix::{
     sys::{
         signal::Signal,
@@ -576,12 +575,10 @@ where
     match cmd.program {
         "git" => {
             exec_cmd_inner(cmd.program, &cmd.args, channels.dup()?, ctx)?.wait_for(|c| c == 0)?;
-            ctx.reset_branch();
             exec_noop(channels, ctx)
         }
         "cd" => {
             std::env::set_current_dir(cmd.args.first().copied().unwrap_or("/"))?;
-            ctx.reset_branch();
             exec_noop(channels, ctx)
         }
         "export" => {

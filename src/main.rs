@@ -1,5 +1,5 @@
 mod app;
-mod autocomp;
+mod autocomplete;
 mod exec;
 mod expand;
 mod frontend;
@@ -55,6 +55,7 @@ fn main() -> Result<(), Error> {
                 // sleep a tiny amount to avoid messing out term output on quick commands that run
                 // on the background, otherwise prompt can get rendered in between
                 thread::sleep(Duration::from_millis(20));
+                app.reset_branch();
                 app.clear_suggestions();
                 viewport.reload_pos(&mut app)?;
                 viewport.display(&mut app)?;
@@ -246,7 +247,7 @@ fn handle_autocomplete(app: &mut AppState) -> Result<(), Error> {
     let (cmd, tip) = split_last_unescaped(rest, utils::is_whitespace);
     let tip = remove_escape_codes(&expand_home_symbol(tip.trim_start()));
 
-    if let Some(suggestions) = autocomp::suggest_autocomp(rest) {
+    if let Some(suggestions) = autocomplete::suggest_autocomp(rest) {
         handle_custom_suggestions(app, start, cmd, &tip, suggestions)?;
         return Ok(());
     }

@@ -1,101 +1,107 @@
-use std::{
-    env::home_dir,
-    fs::{DirEntry, FileType, ReadDir},
-    io::Error,
-    path::{Path, PathBuf},
-};
+use core::str;
 
-use nix::NixPath as _;
+use git2::{Repository, StatusOptions};
 
-use crate::entry_to_path_str;
+pub struct GitCompletions;
 
-pub trait AutoCompStrategy {
-    fn get_entries(&self, tip: &str) -> Vec<AutoCompEntry>;
+pub trait AutocompStrat {
+    fn suggest(args: &[&str]) -> Option<Vec<String>>;
 }
 
-pub struct DirectoryBuilder;
+pub fn suggest_autocomp(cmd: &str) -> Option<Vec<String>> {
+    let parts = cmd.trim().split(" ").collect::<Vec<_>>();
 
-pub struct GitCommandBuilder;
+    let (cmd, parts) = match &parts[..] {
+        [] => return None,
+        [head, parts @ ..] => (*head, parts),
+    };
 
-pub enum AutoCompEntry {
-    Dir(String, FileType),
-    RawCmd(&'static str),
+    match cmd {
+        "git" => GitCompletions::suggest(parts),
+        _ => None,
+    }
 }
 
-impl AutoCompEntry {
-    pub fn as_str(&self) -> &str {
-        use AutoCompEntry::*;
+impl GitCompletions {
+    fn get_branches(prefix: Option<&str>) -> Vec<String> {
+        let Ok(repo) = Repository::discover(".") else {
+            return Default::default();
+        };
+        let Ok(branches) = repo.branches(None) else {
+            return Default::default();
+        };
+        branches
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter_map(|(b, _)| b.name().ok().flatten().map(str::to_string))
+            .filter(|name| prefix.map(|p| name.starts_with(p)).unwrap_or(true))
+            .collect::<Vec<_>>()
+    }
 
-        match self {
-            Dir(s, _) => s.as_str(),
-            RawCmd(s) => s,
+    fn get_changed_files(prefix: Option<&str>, exclude: Option<&[&str]>) -> Vec<String> {
+        let Ok(repo) = Repository::discover(".") else {
+            return Default::default();
+        };
+
+        let mut stopts = StatusOptions::new();
+        stopts.include_untracked(true).include_ignored(false);
+        let statuses = repo.statuses(Some(&mut stopts));
+
+        let mut files = statuses
+            .into_iter()
+            .map(|e| {
+                e.iter()
+                    .map(|se| se.path().map(|p| p.to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .flat_map(|s| s.into_iter())
+            .flatten()
+            .collect::<Vec<_>>();
+
+        if let Some(prefix) = prefix {
+            files.retain(|f| f.starts_with(prefix))
+        }
+        if let Some(exclude) = exclude {
+            files.retain(|f| !exclude.contains(&f.as_str()))
+        }
+        files
+    }
+
+    fn get_commands() -> Vec<String> {
+        [
+            "clone", "init", "add", "mv", "restore", "rm", "bisect", "diff", "grep", "log", "show",
+            "status", "branch", "checkout", "commit", "merge", "rebase", "reset", "switch", "tag",
+            "fetch", "pull", "push",
+        ]
+        .iter()
+        .copied()
+        .map(str::to_string)
+        .collect()
+    }
+}
+
+impl AutocompStrat for GitCompletions {
+    fn suggest(args: &[&str]) -> Option<Vec<String>> {
+        match args {
+            [] => Some(Self::get_commands()),
+            ["checkout"] => Some(Self::get_branches(None)),
+            ["checkout", prefix] => Some(Self::get_branches(Some(prefix))),
+            ["add"] => Some(Self::get_changed_files(None, None)),
+            ["add", prefix] => Some(Self::get_changed_files(Some(prefix), None)),
+            ["add", files @ .., prefix] => Some(Self::get_changed_files(Some(prefix), Some(files))),
+            [partial] => {
+                let cmds: Vec<_> = Self::get_commands()
+                    .into_iter()
+                    .filter(|c| c.starts_with(partial) && c.as_str() != *partial)
+                    .collect();
+                if cmds.is_empty() {
+                    None
+                } else {
+                    Some(cmds)
+                }
+            }
+
+            _ => None,
         }
     }
-}
-
-impl AutoCompStrategy for DirectoryBuilder {
-    fn get_entries(&self, tip: &str) -> Vec<AutoCompEntry> {
-        if let Some(dirs) = Self::list_or_parent(tip) {
-            return dirs
-                .into_iter()
-                .filter_map(|d| d.ok())
-                .filter_map(|d| {
-                    d.file_type()
-                        .map(|ft| (entry_to_path_str(&d), ft))
-                        .ok()
-                })
-                .map(|(p, ft)| AutoCompEntry::Dir(p, ft))
-                .collect();
-        }
-        vec![]
-    }
-}
-
-impl AutoCompStrategy for GitCommandBuilder {
-    fn get_entries(&self, tip: &str) -> Vec<AutoCompEntry> {
-        todo!()
-    }
-
-}
-
-pub fn get_autocomp_strat(cmd: &str) -> Box<dyn AutoCompStrategy> {
-    match cmd.trim() {
-        _ if cmd.starts_with("git") => Box::new(GitCommandBuilder),
-        _ => Box::new(DirectoryBuilder),
-    }
-}
-
-impl DirectoryBuilder {
-    pub fn list_or_parent(dir: &str) -> Option<ReadDir> {
-        if let Ok(dirs) = Self::list_dir(dir) {
-            Some(dirs)
-        } else {
-            Self::list_dir(PathBuf::from(dir).parent()?).ok()
-        }
-    }
-
-    pub fn list_dir<P: AsRef<Path> + std::fmt::Debug>(dir: P) -> Result<ReadDir, Error> {
-        if dir.as_ref().is_empty() {
-            std::fs::read_dir("./")
-        } else {
-            std::fs::read_dir(dir)
-        }
-    }
-}
-
-pub fn is_prefixed_with(needle: &str, entry: &DirEntry) -> bool {
-    let p = entry.path();
-    let Some(s) = p.to_str() else { return false };
-    s.strip_prefix("./")
-        .unwrap_or(s)
-        .starts_with(needle.strip_prefix("./").unwrap_or(needle))
-}
-
-pub fn expand_home_symbol(s: &str) -> String {
-    if !s.starts_with("~/") {
-        return s.to_string();
-    }
-    let home = home_dir().unwrap_or_default();
-    let home_str = home.as_path().to_str().unwrap_or_default();
-    format!("{}/{}", home_str, s.split_at(2).1)
 }

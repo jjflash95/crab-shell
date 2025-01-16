@@ -1,9 +1,11 @@
 use std::{
-    env::home_dir,
     fs::{self, DirEntry, ReadDir},
     io::Error,
     path::{Path, PathBuf},
 };
+
+#[allow(deprecated)]
+use std::env::home_dir;
 
 use nix::NixPath;
 
@@ -39,6 +41,9 @@ pub fn expand_home_symbol(s: &str) -> String {
     if !s.starts_with("~/") {
         return s.to_string();
     }
+
+    // not intended to work on windows anyway
+    #[allow(deprecated)]
     let home = home_dir().unwrap_or_default();
     let home_str = home.as_path().to_str().unwrap_or_default();
     format!("{}/{}", home_str, s.split_at(2).1)

@@ -19,11 +19,13 @@ use termion::{
 pub const SALMON: Rgb = Rgb(232, 175, 151);
 pub const FAINT_SALMON: Rgb = Rgb(208, 155, 131);
 pub const LIGHT_BLACK: Rgb = Rgb(40, 40, 40);
-pub const LIGHT_MAGENTA: Rgb = Rgb(215, 130, 126);
 pub const GOLD: Rgb = Rgb(246, 193, 119);
 pub const MUSK_GREEN: Rgb = Rgb(110, 170, 140);
 pub const LIGHT_BLUE: Rgb = Rgb(156, 207, 216);
 pub const INTENSE_BLACK: Rgb = Rgb(20, 20, 20);
+
+#[allow(dead_code)]
+pub const LIGHT_MAGENTA: Rgb = Rgb(215, 130, 126);
 
 pub type RawTerm = RawTerminal<Stdout>;
 

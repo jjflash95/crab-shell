@@ -146,6 +146,7 @@ pub fn node(mut source: TokenStream) -> Result<(TokenStream, Node), String> {
     }
 }
 
+#[allow(dead_code)]
 fn pattern_match_predicate(source: TokenStream) -> Result<(TokenStream, Expr), String> {
     // TODO: parse pattern match
     test_cmd_prefix(source)

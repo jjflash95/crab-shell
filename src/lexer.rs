@@ -314,16 +314,6 @@ impl<'a> Lexer<'a> {
                 )
         })
     }
-
-    pub fn take_word(&mut self) -> &'a str {
-        self.take_while(|c| {
-            !c.is_whitespace()
-                && !matches!(
-                    c,
-                    '\n' | '|' | '&' | '<' | '>' | '(' | ')' | '{' | '}' | ';' | '[' | ']'
-                )
-        })
-    }
 }
 
 #[allow(dead_code)]

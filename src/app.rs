@@ -145,6 +145,8 @@ impl Sourcer {
     }
 
     fn get_default_path() -> PathBuf {
+        // not intended for windows anyways
+        #[allow(deprecated)]
         match std::env::home_dir() {
             Some(hd) => hd.join(format!(".{}rc", APP_NAME_SHORT)),
             None => PathBuf::new(),
@@ -192,35 +194,6 @@ impl CharBuffer {
 
     pub fn is_empty(&self) -> bool {
         self.left.is_empty() && self.right.is_empty()
-    }
-
-    // returns the amount of vertical space the buffer occupies,
-    // this is the amount of newlines in the buffer + the amount of vertical spaces a line longer
-    // than the terminal width
-    pub fn scrollback(&self, max_width: usize, prompt_len: Option<usize>) -> usize {
-        let mut lines = 0;
-        let mut width = 0;
-        for char in self.left.iter() {
-            width += 1;
-            if lines == 0 && prompt_len.unwrap_or_default() + width > max_width {
-                lines += 1;
-                width = 0;
-                continue;
-            }
-            if *char == '\n' || width == max_width {
-                lines += 1;
-                width = 0;
-            }
-        }
-        for char in self.right.iter().rev() {
-            width += 1;
-            if *char == '\n' || width == max_width {
-                lines += 1;
-                width = 0;
-            }
-        }
-
-        lines
     }
 }
 
@@ -315,6 +288,7 @@ impl History {
     }
 
     pub fn get_default_path() -> PathBuf {
+        // not intended for windows anyways
         #[allow(deprecated)]
         if let Some(home) = std::env::home_dir() {
             return home
