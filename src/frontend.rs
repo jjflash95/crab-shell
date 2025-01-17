@@ -3,7 +3,7 @@ use itertools::Itertools;
 use std::{
     cmp::{self, Ordering},
     fmt::Display,
-    fs::{DirEntry, FileType},
+    fs::{DirEntry, FileType, OpenOptions},
     io::{Error, Stdout, Write},
     os::unix::{ffi::OsStrExt, fs::FileTypeExt},
     str::CharIndices,
@@ -568,9 +568,10 @@ impl Viewport {
         // - Display the left buffer character by character, then Display the right buffer in
         // reverse order character by character
         // - Display the suggestions line by line if any
-        // - Adjust the cursor up if needed by the difference of lines between the current row and
-        // the max row
-        // - Adjust the cursor up if needed by the amount of suggestion lines
+        // - Adjust the cursor up if needed by the difference of lines between (max_row - current_row)
+        // and the buffer's height
+        // - Adjust the cursor up if needed by the difference between (max_row - current_row) and the
+        // buffer's height + the suggestion lines
         // - Display the left buffer character by character again (this is to render the text
         // blinking block cursor in the correct position)
 
@@ -604,16 +605,16 @@ impl Viewport {
         if h > 1 {
             write!(app.term, "{}", termion::clear::UntilNewline)?;
         }
-
+        
         // the buffer height is bigger than the space between our current row and the max row
         // and the last character was a newline char
         if (max_y - pos_y) < h_minus && app.buf.left.last() == Some(&'\n') {
             self.pos.1 = pos_y.saturating_sub(h_minus - (max_y - pos_y));
         }
 
-        // the buffer height is bigger than the space betwenn our current row and the max row
+        // the buffer height is bigger than the space between our current row and the max row
         // and the user just typed a the first character of the next line
-        if (max_y - pos_y) < h_minus && w > 1 {
+        if (max_y - pos_y) < h_minus && w >= 1 {
             self.pos.1 = pos_y.saturating_sub(h_minus - (max_y - pos_y));
         }
 
