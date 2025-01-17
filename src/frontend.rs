@@ -3,7 +3,7 @@ use itertools::Itertools;
 use std::{
     cmp::{self, Ordering},
     fmt::Display,
-    fs::{DirEntry, FileType, OpenOptions},
+    fs::{DirEntry, FileType},
     io::{Error, Stdout, Write},
     os::unix::{ffi::OsStrExt, fs::FileTypeExt},
     str::CharIndices,
@@ -371,10 +371,19 @@ pub fn get_formatted_dirs(
         .max()
         .unwrap_or(0);
 
-    let dirs = dirs
+    let mut dirs = dirs
         .iter()
         .sorted_by(|a, b| comp_dir_entries(a, b))
         .collect::<Vec<_>>();
+
+    if dirs.len() > 30 {
+        dirs.retain(|e| {
+            !e.file_name()
+                .to_str()
+                .map(|fname| fname.starts_with('.'))
+                .unwrap_or(false)
+        });
+    }
 
     let term_width = if term_width > 50 {
         (term_width as f32 * 0.95).floor() as usize
@@ -527,7 +536,16 @@ pub mod gradient {
 impl Viewport {
     pub fn new(app: &mut AppState) -> Result<Self, Error> {
         let max = terminal_size()?;
-        app.term.cursor_pos().map(|pos| Self { pos, max })
+        for _ in 0..5 {
+            if let Ok(pos) = app.term.cursor_pos() {
+                return Ok(Self { pos, max });
+            }
+        }
+
+        Err(Error::new(
+            std::io::ErrorKind::Other,
+            "Could not detect cursor pos",
+        ))
     }
 
     // returns how many characters are un the buffers tail (last line) and how many lines there are
@@ -605,7 +623,7 @@ impl Viewport {
         if h > 1 {
             write!(app.term, "{}", termion::clear::UntilNewline)?;
         }
-        
+
         // the buffer height is bigger than the space between our current row and the max row
         // and the last character was a newline char
         if (max_y - pos_y) < h_minus && app.buf.left.last() == Some(&'\n') {
