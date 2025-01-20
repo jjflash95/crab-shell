@@ -136,7 +136,12 @@ impl Sourcer {
     }
 
     pub fn source_from_file<S: AsRef<Path>>(file: S, app: &mut AppState) -> Result<(), Error> {
-        let mut f = File::open(file.as_ref()).map_err(|_| Error::new(ErrorKind::Other, format!("failed to open: {:?}", file.as_ref())))?;
+        let mut f = File::open(file.as_ref()).map_err(|_| {
+            Error::new(
+                ErrorKind::Other,
+                format!("failed to open: {:?}", file.as_ref()),
+            )
+        })?;
         let mut contents = vec![];
         let _ = f.read_to_end(&mut contents);
         let s = String::from_utf8_lossy(&contents);

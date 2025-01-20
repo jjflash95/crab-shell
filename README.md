@@ -1,5 +1,7 @@
 # crabby 🦀
 
+![](demoterm.gif)
+
 A lightweight & ergonomic shell written in Rust
 
 ## Features
