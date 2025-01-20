@@ -570,10 +570,6 @@ where
     report_tab_title(cmd.program)?;
 
     match cmd.program {
-        "git" => {
-            exec_cmd_inner(cmd.program, &cmd.args, channels.dup()?, ctx)?.wait_for(|c| c == 0)?;
-            exec_noop(channels, ctx)
-        }
         "cd" => {
             let dir = cmd.args.first().copied().unwrap_or("/");
             std::env::set_current_dir(dir)?;
