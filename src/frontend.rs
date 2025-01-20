@@ -31,7 +31,6 @@ pub type RawTerm = RawTerminal<Stdout>;
 
 pub struct Viewport {
     pos: (u16, u16),
-    max: (u16, u16),
 }
 
 #[derive(Debug)]
@@ -534,11 +533,14 @@ pub mod gradient {
 }
 
 impl Viewport {
+    pub fn max() -> Result<(u16, u16), Error> {
+        terminal_size()
+    }
+
     pub fn new(app: &mut AppState) -> Result<Self, Error> {
-        let max = terminal_size()?;
         for _ in 0..5 {
             if let Ok(pos) = app.term.cursor_pos() {
-                return Ok(Self { pos, max });
+                return Ok(Self { pos });
             }
         }
 
@@ -550,8 +552,7 @@ impl Viewport {
 
     // returns how many characters are un the buffers tail (last line) and how many lines there are
     // this is used to handle the cursor's height in the terminal
-    fn get_buffer_shape(&self, app: &AppState, prompt_len: usize) -> (usize, usize) {
-        let max_x = self.max.0;
+    fn get_buffer_shape(&self, app: &AppState, prompt_len: usize, max_x: u16) -> (usize, usize) {
         let mut total_lines = 1;
         let mut total_chars = 0;
         for c in app.buf.left.iter() {
@@ -594,12 +595,12 @@ impl Viewport {
         // blinking block cursor in the correct position)
 
         let (pos_x, pos_y) = self.pos;
-        let (_, max_y) = self.max;
+        let (max_x, max_y) = Viewport::max()?;
 
         let start = cursor::Goto(pos_x, pos_y);
         write!(app.term, "{}{}", start, termion::clear::AfterCursor)?;
         let plen = prompt(app)?;
-        let shape = self.get_buffer_shape(app, plen);
+        let shape = self.get_buffer_shape(app, plen, max_x);
         let (w, h) = shape;
         let h_minus = (h - 1) as u16;
 

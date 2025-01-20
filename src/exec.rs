@@ -578,7 +578,8 @@ where
             exec_noop(channels, ctx)
         }
         "cd" => {
-            std::env::set_current_dir(cmd.args.first().copied().unwrap_or("/"))?;
+            let dir = cmd.args.first().copied().unwrap_or("/");
+            std::env::set_current_dir(dir)?;
             exec_noop(channels, ctx)
         }
         "export" => {

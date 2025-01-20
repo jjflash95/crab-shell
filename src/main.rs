@@ -33,8 +33,6 @@ use termion::{
 const APP_NAME: &str = "crab";
 const APP_NAME_SHORT: &str = "csh";
 
-
-
 fn main() -> Result<(), Error> {
     ctrlc::set_handler(move || {}).expect("Error setting Ctrl-C handler");
     let mut app = AppState::new()?;
@@ -57,6 +55,7 @@ fn main() -> Result<(), Error> {
                 thread::sleep(Duration::from_millis(20));
                 app.reset_branch();
                 app.clear_suggestions();
+                report_cwd()?;
                 viewport.reload_pos(&mut app)?;
                 viewport.display(&mut app)?;
             }

@@ -1,9 +1,32 @@
-use std::{cmp, ops::{Index, Range}};
+use std::{
+    cmp,
+    io::{stdout, Error, Write},
+    ops::{Index, Range},
+};
 
 use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher as _};
 use itertools::Itertools as _;
 
 pub struct MatchedString<'a>(pub &'a str, pub bool, pub (i64, Vec<usize>));
+
+pub fn report_cwd() -> Result<(), Error> {
+    let hostname = hostname::get()?.to_str().unwrap_or_default().to_owned();
+    let cwd = std::env::current_dir()?
+        .as_path()
+        .to_str()
+        .unwrap_or_default()
+        .to_owned();
+
+    // OSC 1337 (iTerm2)
+    write!(stdout(), "\x1b]1337;CurrentDir={cwd}\x07")?;
+    // OSC 133 (iTerm2)
+    write!(stdout(), "\x1b]133;Cwd={cwd}\x07")?;
+    // OSC 7 (Ghostty and others)
+    write!(stdout(), "\x1b]7;file://{hostname}{cwd}\x1b\\")?;
+    // OSC 6 (Mac Terminal.app)
+    write!(stdout(), "\x1b]6;1;{cwd}\x07")?;
+    Ok(())
+}
 
 pub fn fuzzy_sort_strings<'a>(needle: &str, haystack: &'a [String]) -> Vec<MatchedString<'a>> {
     let matcher = SkimMatcherV2::default();
