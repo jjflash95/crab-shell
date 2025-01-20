@@ -25,7 +25,12 @@ pub fn report_cwd() -> Result<(), Error> {
     write!(stdout(), "\x1b]7;file://{hostname}{cwd}\x1b\\")?;
     // OSC 6 (Mac Terminal.app)
     write!(stdout(), "\x1b]6;1;{cwd}\x07")?;
-    Ok(())
+
+    report_tab_title(&cwd)
+}
+
+pub fn report_tab_title(t: &str) -> Result<(), Error> {
+    write!(stdout(), "\x1b]0;{t}\x07")
 }
 
 pub fn fuzzy_sort_strings<'a>(needle: &str, haystack: &'a [String]) -> Vec<MatchedString<'a>> {

@@ -280,6 +280,37 @@ impl<'a> Lexer<'a> {
                 continue;
             };
 
+            if *c == '$' {
+                // we are in the middle of a string ( i.e: ```CWD=$(cwd)``` ) so we need to parse
+                // the whole $pound and parenthesis, the inside string and the enclosing
+                // parenthesis, then we keep parsing as usual
+                // take full subcommand
+                let _ = iterable.next();
+
+                if matches!(iterable.peek(), Some((_, '('))) {
+                    let _ = iterable.next();
+                    let mut needed_parens = 1;
+
+                    while let Some((_, c)) = iterable.peek() {
+                        match c {
+                            ')' => {
+                                needed_parens -= 1;
+                            }
+                            '(' => {
+                                needed_parens += 1;
+                            }
+                            _ => {}
+                        }
+
+                        iterable.next();
+                        if needed_parens == 0 {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+
             if !escaped && !pred(*c) {
                 break;
             }

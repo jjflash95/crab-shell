@@ -585,7 +585,7 @@ impl Display for Cmd<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lexer::Tokenizer;
+    use crate::lang::lexer::Tokenizer;
 
     #[test]
     fn test_simple_command() {

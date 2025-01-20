@@ -15,11 +15,7 @@ use nix::{
 };
 
 use crate::{
-    app::{AppState, Sourcer},
-    expand::{lexer::Token as ArgToken, tokenize},
-    lang::lexer::Tokenizer,
-    lang::parser::{ast, Cmd, Expr, FileMode, Node, Stmt},
-    utils, APP_NAME_SHORT,
+    app::{AppState, Sourcer}, expand::{lexer::Token as ArgToken, tokenize}, lang::{lexer::Tokenizer, parser::{ast, Cmd, Expr, FileMode, Node, Stmt}}, report_tab_title, utils, APP_NAME_SHORT
 };
 
 pub const NOOP_PROGRAM: Cmd<'static> = Cmd {
@@ -571,6 +567,7 @@ where
     // over the commands output
     write!(ctx.term, "{}\r", termion::clear::CurrentLine)?;
     let _ = ctx.term.flush();
+    report_tab_title(cmd.program)?;
 
     match cmd.program {
         "git" => {
