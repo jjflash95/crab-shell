@@ -17,8 +17,8 @@ use nix::{
 use crate::{
     app::{AppState, Sourcer},
     expand::{lexer::Token as ArgToken, tokenize},
-    lexer::Tokenizer,
-    parser::{ast, Cmd, Expr, FileMode, Node, Stmt},
+    lang::lexer::Tokenizer,
+    lang::parser::{ast, Cmd, Expr, FileMode, Node, Stmt},
     utils, APP_NAME_SHORT,
 };
 

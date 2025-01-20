@@ -1,6 +1,6 @@
 use std::{fmt::Display, iter::Peekable, slice::Iter};
 
-use crate::lexer::{RedirOp, Token};
+use crate::lang::lexer::{RedirOp, Token};
 
 macro_rules! try_parsers {
     ($input:expr, $first:expr $(, $rest:expr)*) => {{

@@ -1,4 +1,4 @@
-use crate::lexer::Lexer;
+use crate::lang::lexer::Lexer;
 
 #[derive(PartialEq, Debug)]
 pub enum Token<'a> {

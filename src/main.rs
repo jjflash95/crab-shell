@@ -4,14 +4,14 @@ mod exec;
 mod expand;
 mod frontend;
 mod git;
-mod lexer;
 mod nav;
-mod parser;
+mod lang;
 mod utils;
 
 use app::{AppState, CharBuffer};
 use frontend::*;
-use lexer::Tokenizer;
+use lang::lexer::Tokenizer;
+use lang::parser;
 use nav::*;
 use utils::*;
 

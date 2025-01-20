@@ -11,7 +11,7 @@ use termion::{cursor, raw::IntoRawMode as _};
 use crate::{
     exec::{exec_node, StdChannels, WaitableProcess as _},
     git,
-    lexer::Tokenizer,
+    lang::lexer::Tokenizer,
     parser, RawTerm, APP_NAME_SHORT,
 };
 
