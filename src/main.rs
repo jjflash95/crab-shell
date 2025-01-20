@@ -30,7 +30,7 @@ use termion::{
 };
 
 #[allow(dead_code)]
-const APP_NAME: &str = "crab";
+const APP_NAME: &str = "crabby";
 const APP_NAME_SHORT: &str = "csh";
 
 fn main() -> Result<(), Error> {

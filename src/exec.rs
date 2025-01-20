@@ -15,7 +15,13 @@ use nix::{
 };
 
 use crate::{
-    app::{AppState, Sourcer}, expand::{lexer::Token as ArgToken, tokenize}, lang::{lexer::Tokenizer, parser::{ast, Cmd, Expr, FileMode, Node, Stmt}}, report_tab_title, utils, APP_NAME_SHORT
+    app::{AppState, Sourcer},
+    expand::{lexer::Token as ArgToken, tokenize},
+    lang::{
+        lexer::Tokenizer,
+        parser::{ast, Cmd, Expr, FileMode, Node, Stmt},
+    },
+    report_tab_title, utils, APP_NAME_SHORT,
 };
 
 pub const NOOP_PROGRAM: Cmd<'static> = Cmd {
@@ -609,14 +615,12 @@ where
         "colorscheme" => {
             for arg in &cmd.args {
                 match *arg {
-                    "default" => {
-                        Sourcer::source_from_text(include_str!("../themes/default.cs"), ctx)
-                    }
-                    "blue" => Sourcer::source_from_text(include_str!("../themes/blue.cs"), ctx),
-                    "sunset" => Sourcer::source_from_text(include_str!("../themes/sunset.cs"), ctx),
-                    "green" => Sourcer::source_from_text(include_str!("../themes/sunset.cs"), ctx),
-                    "dark" => Sourcer::source_from_text(include_str!("../themes/dark.cs"), ctx),
-                    "boke" => Sourcer::source_from_text(include_str!("../themes/boke.cs"), ctx),
+                    "default" => Sourcer::source_from_text(include_str!("../themes/default"), ctx),
+                    "blue" => Sourcer::source_from_text(include_str!("../themes/blue"), ctx),
+                    "sunset" => Sourcer::source_from_text(include_str!("../themes/sunset"), ctx),
+                    "green" => Sourcer::source_from_text(include_str!("../themes/green"), ctx),
+                    "dark" => Sourcer::source_from_text(include_str!("../themes/dark"), ctx),
+                    "boke" => Sourcer::source_from_text(include_str!("../themes/boke"), ctx),
                     _ => source(&[arg], ctx)?,
                 }
             }

@@ -1,4 +1,4 @@
-# crab 🦀
+# crabby 🦀
 
 A lightweight & ergonomic shell written in Rust
 
@@ -17,12 +17,12 @@ A lightweight & ergonomic shell written in Rust
 
 Assuming `rustc >= 1.80.1`
 ```
-git clone https://github.com/jjflash95/crab-shell
-cd crab-shell
+git clone https://github.com/jjflash95/crabby
+cd crabby
 cargo build --release
 ```
 
-The binary will be available in `./target/release/crab-shell`
+The binary will be available in `./target/release/crabby`
 
 Default path for `.rc` file is `~/.cshrc`
 
