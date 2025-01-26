@@ -246,9 +246,9 @@ impl<'a> Display for MatchedString<'a> {
     }
 }
 
-pub fn write_and_flush<T: Write, S: Display>(term: &mut T, s: S) -> Result<(), Error> {
-    write!(term, "{}", s)?;
-    term.flush()?;
+pub fn write_and_flush<S: Display>(app: &mut AppState, s: S) -> Result<(), Error> {
+    write!(app.term, "{}", s)?;
+    app.term.flush()?;
     Ok(())
 }
 
@@ -307,11 +307,11 @@ pub fn prompt(app: &mut AppState) -> Result<usize, Error> {
 }
 
 pub fn display_cmd_history<S: Display + CharIndicesHelper>(
-    term: &mut RawTerm,
+    app: &mut AppState,
     cmds: &[S],
 ) -> Result<(), Error> {
     let (w, h) = terminal_size()?;
-    write!(term, "{}", clear::All)?;
+    write!(app.term, "{}", clear::All)?;
     let cmds = if cmds.len() >= h as usize {
         &cmds[cmds.len() - (h as usize - 1)..]
     } else {
@@ -324,7 +324,7 @@ pub fn display_cmd_history<S: Display + CharIndicesHelper>(
             Some((idx, _)) => (cmd.to_string()[..idx].to_string(), "..."), // xd
         };
         write!(
-            term,
+            app.term,
             "{}{}{}{}",
             style::Reset,
             cursor::Goto(3, h - i as u16 - 1),
@@ -333,7 +333,7 @@ pub fn display_cmd_history<S: Display + CharIndicesHelper>(
         )?;
     }
     write!(
-        term,
+        app.term,
         "{}> {}{}{}quick search (Esc to exit){}",
         cursor::Goto(1, h),
         cursor::Save,
@@ -341,7 +341,7 @@ pub fn display_cmd_history<S: Display + CharIndicesHelper>(
         cursor::Left(25_u16),
         cursor::Restore
     )?;
-    term.flush()?;
+    app.term.flush()?;
     Ok(())
 }
 

@@ -17,16 +17,12 @@ use utils::*;
 
 use exec::{exec_program, WaitableProcess};
 use std::{
-    io::{stdin, Error, Stdin, Write as _},
+    io::{stdin, stdout, Error, Stdin, Write as _},
     thread,
     time::Duration,
 };
 use termion::{
-    clear,
-    event::Key,
-    input::{Keys, TermRead},
-    screen::{ToAlternateScreen, ToMainScreen},
-    terminal_size,
+    clear, event::Key, input::{Keys, TermRead}, raw::IntoRawMode, screen::{ToAlternateScreen, ToMainScreen}, terminal_size
 };
 
 #[allow(dead_code)]
@@ -35,7 +31,7 @@ const APP_NAME_SHORT: &str = "csh";
 
 fn main() -> Result<(), Error> {
     ctrlc::set_handler(move || {}).expect("Error setting Ctrl-C handler");
-    let mut app = AppState::new()?;
+    let mut app = AppState::new(Some(stdout().into_raw_mode()?))?;
     let mut input = stdin().keys();
     let mut viewport = Viewport::new(&mut app)?;
     viewport.display(&mut app)?;
@@ -173,14 +169,13 @@ fn handle_move_shift_right(app: &mut AppState) {
 fn handle_ctrlc(app: &mut AppState) -> Result<(), Error> {
     app.buf.left.clear();
     app.buf.right.clear();
-    //reset_cursor_and_clear(app, x, y)?;
     app.term.flush()?;
     Ok(())
 }
 
 fn handle_exec(app: &mut AppState) -> Result<(), Error> {
     if app.buf.is_empty() {
-        write_and_flush(&mut app.term, &format!("{}\r❯\r\n", clear::CurrentLine))?;
+        write_and_flush(app, &format!("{}\r❯\r\n", clear::CurrentLine))?;
         return Ok(());
     }
 
@@ -190,7 +185,7 @@ fn handle_exec(app: &mut AppState) -> Result<(), Error> {
     app.buf.right.clear();
     app.history.set_current(app.buf.string_nc());
     write_and_flush(
-        &mut app.term,
+        app,
         &format!(
             "{}\r❯ {}\r\n",
             clear::CurrentLine,
@@ -288,10 +283,10 @@ fn handle_autocomplete(app: &mut AppState) -> Result<(), Error> {
 }
 
 fn handle_fuzzy_find(app: &mut AppState, keys: &mut Keys<Stdin>) -> Result<(), Error> {
-    write_and_flush(&mut app.term, &format!("{}", ToAlternateScreen))?;
+    write_and_flush(app, &format!("{}", ToAlternateScreen))?;
     let mut new_buffer: Option<String> = None;
-    let cmds = app.history.all();
-    display_cmd_history(&mut app.term, cmds)?;
+    let cmds = app.history.all().to_owned();
+    display_cmd_history(app, &cmds)?;
 
     let mut selected = cmds.len().saturating_sub(1);
     let mut search = CharBuffer::new();
@@ -299,7 +294,7 @@ fn handle_fuzzy_find(app: &mut AppState, keys: &mut Keys<Stdin>) -> Result<(), E
         match k {
             Key::Esc | Key::Ctrl('c') => break,
             Key::Char('\n') => {
-                let filtered_cmds = fuzzy_sort_strings(&search.string_nc(), cmds);
+                let filtered_cmds = fuzzy_sort_strings(&search.string_nc(), &cmds);
                 if let Some(cmd) = filtered_cmds.get(selected) {
                     new_buffer = Some(cmd.0.to_string());
                 }
@@ -324,16 +319,16 @@ fn handle_fuzzy_find(app: &mut AppState, keys: &mut Keys<Stdin>) -> Result<(), E
             _ => {}
         }
         let needle = search.string_nc();
-        let mut sorted = fuzzy_sort_strings(&needle, cmds);
+        let mut sorted = fuzzy_sort_strings(&needle, &cmds);
         selected = selected.clamp(0, sorted.len().saturating_sub(1));
         let _ = sorted
             .get_mut(selected)
             .map(|matched| matched.set_selected());
-        display_cmd_history(&mut app.term, &sorted)?;
-        write_and_flush(&mut app.term, &search)?;
+        display_cmd_history(app, &sorted)?;
+        write_and_flush(app, &search)?;
     }
 
-    write_and_flush(&mut app.term, &format!("{}", ToMainScreen))?;
+    write_and_flush(app, &format!("{}", ToMainScreen))?;
     if let Some(new_buffer) = new_buffer {
         app.buf.left.clear();
         app.buf.right.clear();

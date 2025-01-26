@@ -2,11 +2,11 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display},
     fs::{self, File},
-    io::{stdout, BufRead as _, BufReader, Error, ErrorKind, Read, Write},
+    io::{BufRead as _, BufReader, Error, ErrorKind, Read, Write},
     path::{Path, PathBuf},
 };
 
-use termion::{cursor, raw::IntoRawMode as _};
+use termion::{cursor, raw::IntoRawMode};
 
 use crate::{
     exec::{exec_node, StdChannels, WaitableProcess as _},
@@ -17,8 +17,12 @@ use crate::{
 
 const HISTORY_FILE_NAME: &str = ".history";
 
+pub struct TerminalWriter {
+    term: Option<RawTerm>,
+}
+
 pub struct AppState {
-    pub term: RawTerm,
+    pub term: TerminalWriter,
     pub buf: CharBuffer,
     pub history: History,
     pub branch: Option<String>,
@@ -48,9 +52,9 @@ pub struct History {
 pub struct Sourcer;
 
 impl AppState {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new(stdout: Option<RawTerm>) -> Result<Self, Error> {
         let mut this = Self {
-            term: stdout().into_raw_mode()?,
+            term: TerminalWriter::new(stdout),
             buf: CharBuffer::new(),
             history: History::new(),
             branch: git::get_current_branch(),
@@ -199,6 +203,42 @@ impl CharBuffer {
 
     pub fn is_empty(&self) -> bool {
         self.left.is_empty() && self.right.is_empty()
+    }
+}
+
+impl Write for TerminalWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.term
+            .as_mut()
+            .and_then(|t| Some(t.write(buf)))
+            .unwrap_or(Ok(buf.len()))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.term
+            .as_mut()
+            .and_then(|t| Some(t.flush()))
+            .unwrap_or(Ok(()))
+    }
+}
+
+impl TerminalWriter {
+    pub fn new(term: Option<RawTerm>) -> Self {
+        Self { term }
+    }
+
+    pub fn activate_raw_mode(&mut self) -> std::io::Result<()> {
+        self.term
+            .as_mut()
+            .and_then(|t| Some(t.activate_raw_mode()))
+            .unwrap_or(Ok(()))
+    }
+
+    pub fn suspend_raw_mode(&mut self) -> std::io::Result<()> {
+        self.term
+            .as_mut()
+            .and_then(|t| Some(t.suspend_raw_mode()))
+            .unwrap_or(Ok(()))
     }
 }
 
@@ -354,7 +394,7 @@ pub mod tests {
                 done
             ";
 
-        let mut app = AppState::new().unwrap();
+        let mut app = AppState::new(None).unwrap();
         Sourcer::source_from_text(src, &mut app);
         assert_eq!(app.get_var("var1"), Some("1".to_string()));
         assert_eq!(app.get_var("var2"), Some("345".to_string()));
