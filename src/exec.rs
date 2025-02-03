@@ -577,7 +577,9 @@ where
 
     match cmd.program {
         "cd" => {
-            let dir = cmd.args.first().copied().unwrap_or("/");
+            let dir = cmd.args.first().map(std::path::PathBuf::from).unwrap_or_else(|| {
+                std::env::var("HOME").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from("/"))
+            });
             std::env::set_current_dir(dir)?;
             exec_noop(channels, ctx)
         }
