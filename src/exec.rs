@@ -833,11 +833,19 @@ where
     O: Into<Stdio> + AsRawFd + Write,
     E: Into<Stdio> + AsRawFd + Write,
 {
-    let joined_args = args.join(" "); // 
+    let joined_args = args.join(" ");
     let alias: Vec<&str> = joined_args.split("=").collect();
 
-    ctx.aliases.insert(alias[0].to_string(), alias[1].to_string());
-    Ok(())
+    if alias.len() < 2 {
+        Err(Error::new(
+            ErrorKind::InvalidInput,
+            "Err (missing parameters)\nExample use: alias ll=ls -l".to_string(),
+        ))
+    } else {
+        ctx.aliases.insert(alias[0].to_string(), alias[1].to_string());
+        Ok(())
+    }
+
 }
 fn clone<C: AsRawFd>(channel: &C) -> Result<File, Error> {
     Ok(unsafe { File::from_raw_fd(dup(channel.as_raw_fd())?) })
