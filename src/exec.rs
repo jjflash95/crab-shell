@@ -583,6 +583,10 @@ where
             std::env::set_current_dir(dir)?;
             exec_noop(channels, ctx)
         }
+        "alias" => {
+            set_alias(&cmd.args, channels.dup()?, ctx)?;
+            exec_noop(channels, ctx)
+        }
         "export" => {
             set_vars(&cmd.args, true, channels.dup()?, ctx)?;
             exec_noop(channels, ctx)
@@ -662,20 +666,24 @@ where
 {
     let (stdin, stdout, stderr) = channels.inner();
 
-    let args: Vec<_> = args
-        .iter()
-        .map(|s| utils::remove_escape_codes(s))
-        .map(|s| evaluate_arg(&s, ctx))
-        .flat_map(expand_wildcards)
-        .collect();
+    let aliases = ctx.aliases.clone();
+    let resolved_program = match aliases.get(program) {
+        Some(alias_command) => alias_command.split_whitespace().collect::<Vec<&str>>(),
+        None => vec![program],
+    };
 
-    let child = Command::new(program)
-        .args(args)
+    let program_name: &str = resolved_program[0];
+    let program_args = 
+        if resolved_program[1..].is_empty() { args }
+        else { &resolved_program[1..] };
+
+    let child = Command::new(program_name)
+        .args(program_args)
         .stdin(stdin)
         .stdout(stdout)
         .stderr(stderr)
         .spawn()
-        .add_ctx(program)?;
+        .add_ctx(program_name)?;
 
     Ok(Pid::from_raw(child.id() as i32))
 }
@@ -815,7 +823,30 @@ where
     }
     Ok(())
 }
+fn set_alias<I, O, E>(
+    args: &[&str],
+    _channels: StdChannels<I, O, E>,
+    ctx: &mut AppState,
+    ) -> Result<(), Error>
+where
+    I: Into<Stdio>,
+    O: Into<Stdio> + AsRawFd + Write,
+    E: Into<Stdio> + AsRawFd + Write,
+{
+    let joined_args = args.join(" ");
+    let alias: Vec<&str> = joined_args.split("=").collect();
 
+    if alias.len() < 2 {
+        Err(Error::new(
+            ErrorKind::InvalidInput,
+            "Err (missing parameters)\nExample use: alias ll=ls -l".to_string(),
+        ))
+    } else {
+        ctx.aliases.insert(alias[0].to_string(), alias[1].to_string());
+        Ok(())
+    }
+
+}
 fn clone<C: AsRawFd>(channel: &C) -> Result<File, Error> {
     Ok(unsafe { File::from_raw_fd(dup(channel.as_raw_fd())?) })
 }

@@ -27,6 +27,7 @@ pub struct AppState {
     pub history: History,
     pub branch: Option<String>,
     pub locals: HashMap<String, String>,
+    pub aliases: HashMap<String, String>,
 
     // Suggestions is a vector of already formatted and styled strings, including color, spacing
     // and boldness, each string is displayed in its own line
@@ -59,6 +60,7 @@ impl AppState {
             history: History::new(),
             branch: git::get_current_branch(),
             locals: HashMap::new(),
+            aliases: HashMap::new(),
             suggestions: None,
             breaker: None,
         };
