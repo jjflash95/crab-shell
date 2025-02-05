@@ -2,6 +2,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, stderr, Error, ErrorKind, Read as _, Stderr, Stdout, Write},
     os::fd::{AsRawFd, FromRawFd as _},
+    path::PathBuf,
     process::{Command, Stdio},
 };
 
@@ -577,9 +578,12 @@ where
 
     match cmd.program {
         "cd" => {
-            let dir = cmd.args.first().map(std::path::PathBuf::from).unwrap_or_else(|| {
-                std::env::var("HOME").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from("/"))
-            });
+            let dir = PathBuf::from(
+                cmd.args
+                    .first()
+                    .map(|dir| dir.to_string())
+                    .unwrap_or_else(|| std::env::var("HOME").unwrap_or("/".into())),
+            );
             std::env::set_current_dir(dir)?;
             exec_noop(channels, ctx)
         }
@@ -666,16 +670,15 @@ where
 {
     let (stdin, stdout, stderr) = channels.inner();
 
-    let aliases = ctx.aliases.clone();
-    let resolved_program = match aliases.get(program) {
+    let mut resolved_program = match ctx.aliases.get(program) {
         Some(alias_command) => alias_command.split_whitespace().collect::<Vec<&str>>(),
         None => vec![program],
     };
 
+    resolved_program.extend_from_slice(args);
+
     let program_name: &str = resolved_program[0];
-    let program_args = 
-        if resolved_program[1..].is_empty() { args }
-        else { &resolved_program[1..] };
+    let program_args = &resolved_program[1..];
 
     let child = Command::new(program_name)
         .args(program_args)
@@ -827,7 +830,7 @@ fn set_alias<I, O, E>(
     args: &[&str],
     _channels: StdChannels<I, O, E>,
     ctx: &mut AppState,
-    ) -> Result<(), Error>
+) -> Result<(), Error>
 where
     I: Into<Stdio>,
     O: Into<Stdio> + AsRawFd + Write,
@@ -842,10 +845,10 @@ where
             "Err (missing parameters)\nExample use: alias ll=ls -l".to_string(),
         ))
     } else {
-        ctx.aliases.insert(alias[0].to_string(), alias[1].to_string());
+        let alias_def = evaluate_arg(alias[1], ctx);
+        ctx.aliases.insert(alias[0].to_string(), alias_def);
         Ok(())
     }
-
 }
 fn clone<C: AsRawFd>(channel: &C) -> Result<File, Error> {
     Ok(unsafe { File::from_raw_fd(dup(channel.as_raw_fd())?) })
